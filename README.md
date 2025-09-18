@@ -28,38 +28,67 @@ WAN_inference/
 
 ## 🚀 快速开始
 
-### 1. 克隆项目
+### 1. 环境安装
 ```bash
+# 克隆项目
 git clone https://github.com/pkucaoyuan/WAN_inference.git
 cd WAN_inference
+
+# 进入推理代码目录
+cd Wan2.2
+
+# 安装依赖（确保torch >= 2.4.0）
+pip install -r requirements.txt
+
+# 如果需要语音转视频功能，额外安装：
+pip install -r requirements_s2v.txt
+
+# 注意：如果flash_attn安装失败，先安装其他包，最后安装flash_attn
 ```
 
 ### 2. 下载模型权重
 
-**5B模型**:
+**5B模型（后台下载）**:
 ```bash
+cd ..  # 回到项目根目录
 python download_model_weights.py
+# 监控下载进度: tail -f ./model_weights/download.log
 ```
 
-**27B MOE模型**:
+**27B MOE模型（后台下载）**:
 ```bash
 cd WAN2.2-27B
 python download_T2V_A14B_weights.py
+# 监控下载进度: tail -f ./T2V_A14B_weights/download.log
 ```
 
 ### 3. 推理示例
 
-**5B模型推理**:
+**5B模型推理（RTX 4090可运行）**:
 ```bash
-python Wan2.2/generate.py --task ti2v-5B --size 1280*704 \
-    --ckpt_dir ./Wan2.2-TI2V-5B \
+cd Wan2.2  # 进入推理代码目录
+python generate.py --task ti2v-5B --size 1280*704 \
+    --ckpt_dir ../model_weights \
+    --offload_model True --convert_model_dtype --t5_cpu \
+    --frame_num 81 \
     --prompt "A beautiful sunset over the ocean"
 ```
 
-**27B MOE模型推理**:
+**27B MOE模型单GPU推理（需要80GB+显存）**:
 ```bash
-python Wan2.2/generate.py --task t2v-A14B --size 1280*720 \
-    --ckpt_dir ./WAN2.2-27B/T2V_A14B_weights \
+python generate.py --task t2v-A14B --size 1280*720 \
+    --ckpt_dir ../WAN2.2-27B/T2V_A14B_weights \
+    --offload_model True --convert_model_dtype \
+    --frame_num 81 \
+    --prompt "A beautiful sunset over the ocean"
+```
+
+**27B MOE模型多GPU推理（推荐）**:
+```bash
+torchrun --nproc_per_node=4 generate.py --task t2v-A14B \
+    --size 1280*720 --ckpt_dir ../WAN2.2-27B/T2V_A14B_weights \
+    --dit_fsdp --t5_fsdp --ulysses_size 4 \
+    --frame_num 81 \
     --prompt "A beautiful sunset over the ocean"
 ```
 
@@ -79,14 +108,37 @@ python Wan2.2/generate.py --task t2v-A14B --size 1280*720 \
 ## 🔧 系统要求
 
 ### 最低要求 (5B模型)
-- GPU: RTX 4090 24GB
-- RAM: 32GB
-- 存储: 50GB
+- **GPU**: RTX 4090 24GB
+- **RAM**: 32GB
+- **存储**: 50GB
+- **Python**: 3.8+
+- **PyTorch**: >= 2.4.0
 
 ### 推荐配置 (27B MOE模型)
-- GPU: A100 80GB × 4
-- RAM: 128GB
-- 存储: 200GB
+- **GPU**: A100 80GB × 4-8
+- **RAM**: 128GB
+- **存储**: 200GB
+- **Python**: 3.8+
+- **PyTorch**: >= 2.4.0
+
+## 📝 重要参数说明
+
+### **帧数限制**
+- `--frame_num` 必须满足公式：**4n+1**
+- 有效帧数：5, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57, 61, 65, 69, 73, 77, **81**, 85...
+- **不能设置为1帧**，最小为5帧
+
+### **分辨率设置**
+- **5B模型**: `1280*704` 或 `704*1280`（720P）
+- **27B模型**: `1280*720`（标准720P）
+- **I2V任务**: 宽高比跟随输入图像
+
+### **内存优化参数**
+- `--offload_model True`: 模型卸载到CPU
+- `--convert_model_dtype`: 转换模型数据类型
+- `--t5_cpu`: T5编码器在CPU运行
+- `--dit_fsdp`: DiT模型FSDP分片
+- `--ulysses_size N`: 序列并行度
 
 ## 📄 许可证
 
