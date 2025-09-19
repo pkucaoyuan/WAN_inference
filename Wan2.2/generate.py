@@ -417,8 +417,12 @@ def generate(args):
         # 多GPU环境优化
         if world_size > 1:
             args.offload_model = False  # 多GPU时禁用模型卸载
+            # 设置更保守的内存和并发配置
+            os.environ['OMP_NUM_THREADS'] = '1'
+            os.environ['MKL_NUM_THREADS'] = '1'
             if rank == 0:
                 print(f"🔧 多GPU优化: {world_size}GPU环境，自动禁用模型卸载")
+                print(f"🔧 线程优化: 设置OMP_NUM_THREADS=1避免过载")
         
         # 模型加载时间记录
         model_load_start = time.time()

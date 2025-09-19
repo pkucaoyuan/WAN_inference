@@ -112,8 +112,26 @@ class WanT2V:
                 shard_fn=shard_fn,
                 convert_model_dtype=convert_model_dtype)
         
-        # 使用线程池并行加载两个专家（仅在单GPU或非FSDP时使用）
-        if not (dit_fsdp or use_sp):
+        # 多GPU环境下需要同步加载以避免竞争
+        if dit_fsdp or use_sp:
+            # 分布式环境：只有rank 0加载，然后广播
+            if self.rank == 0:
+                print(f"📥 主进程加载专家模型（分布式模式）...")
+                self.low_noise_model = load_expert_model(config.low_noise_checkpoint, "低噪声专家")
+                self.high_noise_model = load_expert_model(config.high_noise_checkpoint, "高噪声专家")
+                print(f"✅ 主进程专家模型加载完成")
+            else:
+                # 其他进程等待并加载相同模型
+                self.low_noise_model = load_expert_model(config.low_noise_checkpoint, "低噪声专家")
+                self.high_noise_model = load_expert_model(config.high_noise_checkpoint, "高噪声专家")
+            
+            # 同步所有进程
+            if dist.is_initialized():
+                dist.barrier()
+                if self.rank == 0:
+                    print(f"✅ 所有进程专家模型同步完成")
+        else:
+            # 单GPU环境：使用并行加载
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                 low_noise_future = executor.submit(
                     load_expert_model, config.low_noise_checkpoint, "低噪声专家")
@@ -124,12 +142,6 @@ class WanT2V:
                 self.low_noise_model = low_noise_future.result()
                 self.high_noise_model = high_noise_future.result()
                 print(f"✅ 专家模型并行加载完成")
-        else:
-            # 多GPU环境下顺序加载以避免竞争
-            print(f"📥 顺序加载专家模型（多GPU模式）...")
-            self.low_noise_model = load_expert_model(config.low_noise_checkpoint, "低噪声专家")
-            self.high_noise_model = load_expert_model(config.high_noise_checkpoint, "高噪声专家")
-            print(f"✅ 专家模型加载完成")
         if use_sp:
             self.sp_size = get_world_size()
         else:
