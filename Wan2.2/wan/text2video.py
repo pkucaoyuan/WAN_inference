@@ -9,6 +9,7 @@ import time
 import types
 from contextlib import contextmanager
 from functools import partial
+import concurrent.futures
 
 import torch
 import torch.cuda.amp as amp
@@ -99,23 +100,29 @@ class WanT2V:
             device=self.device)
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.low_noise_model = WanModel.from_pretrained(
-            checkpoint_dir, subfolder=config.low_noise_checkpoint)
-        self.low_noise_model = self._configure_model(
-            model=self.low_noise_model,
-            use_sp=use_sp,
-            dit_fsdp=dit_fsdp,
-            shard_fn=shard_fn,
-            convert_model_dtype=convert_model_dtype)
-
-        self.high_noise_model = WanModel.from_pretrained(
-            checkpoint_dir, subfolder=config.high_noise_checkpoint)
-        self.high_noise_model = self._configure_model(
-            model=self.high_noise_model,
-            use_sp=use_sp,
-            dit_fsdp=dit_fsdp,
-            shard_fn=shard_fn,
-            convert_model_dtype=convert_model_dtype)
+        
+        # 并行加载两个专家模型以减少加载时间
+        def load_expert_model(subfolder, model_name):
+            print(f"📥 并行加载 {model_name}...")
+            model = WanModel.from_pretrained(checkpoint_dir, subfolder=subfolder)
+            return self._configure_model(
+                model=model,
+                use_sp=use_sp,
+                dit_fsdp=dit_fsdp,
+                shard_fn=shard_fn,
+                convert_model_dtype=convert_model_dtype)
+        
+        # 使用线程池并行加载两个专家
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            low_noise_future = executor.submit(
+                load_expert_model, config.low_noise_checkpoint, "低噪声专家")
+            high_noise_future = executor.submit(
+                load_expert_model, config.high_noise_checkpoint, "高噪声专家")
+            
+            # 等待加载完成
+            self.low_noise_model = low_noise_future.result()
+            self.high_noise_model = high_noise_future.result()
+            print(f"✅ 专家模型并行加载完成")
         if use_sp:
             self.sp_size = get_world_size()
         else:

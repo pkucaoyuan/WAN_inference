@@ -59,18 +59,7 @@ def _validate_args(args):
     assert args.task in WAN_CONFIGS, f"Unsupport task: {args.task}"
     assert args.task in EXAMPLE_PROMPT, f"Unsupport task: {args.task}"
     
-    # Frame number validation
-    if args.frame_num is not None and (args.frame_num - 1) % 4 != 0:
-        print(f"❌ 错误: frame_num必须满足4n+1公式，当前值{args.frame_num}无效")
-        print(f"💡 建议使用: 5, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57, 61, 65, 69, 73, 77, 81, 85...")
-        if args.frame_num == 1:
-            print(f"🔧 自动修正: frame_num从1改为5")
-            args.frame_num = 5
-        else:
-            # 自动修正到最近的有效值
-            n = max(1, round((args.frame_num - 1) / 4))
-            args.frame_num = 4 * n + 1
-            print(f"🔧 自动修正: frame_num改为{args.frame_num}")
+    # Frame number validation removed - allow any frame number including 1
 
     if args.prompt is None:
         args.prompt = EXAMPLE_PROMPT[args.task]["prompt"]
@@ -233,6 +222,11 @@ def _parse_args():
         type=int,
         default=0,
         help="Number of final steps in high-noise phase to skip conditional forward pass.")
+    parser.add_argument(
+        "--fast_loading",
+        action="store_true",
+        default=False,
+        help="Enable fast loading optimizations: disable model offloading and keep models on GPU.")
     parser.add_argument(
         "--convert_model_dtype",
         action="store_true",
@@ -397,6 +391,19 @@ def generate(args):
         logging.info(f"Extended prompt: {args.prompt}")
 
     if "t2v" in args.task:
+        # 快速加载优化
+        if args.fast_loading:
+            args.offload_model = False
+            args.t5_cpu = False
+            if rank == 0:
+                print("🚀 快速加载模式: 禁用模型卸载，所有模型常驻GPU")
+                # GPU预热和内存预分配
+                print("🔥 GPU预热中...")
+                torch.cuda.init()
+                torch.cuda.empty_cache()
+                # 预分配GPU内存
+                torch.cuda.set_per_process_memory_fraction(0.95)
+        
         # 模型加载时间记录
         model_load_start = time.time()
         logging.info("Creating WanT2V pipeline...")
