@@ -214,7 +214,8 @@ class WanI2V:
                  guide_scale=5.0,
                  n_prompt="",
                  seed=-1,
-                 offload_model=True):
+                 offload_model=True,
+                 cfg_truncate_steps=5):
         r"""
         Generates video frames from input image and text prompt using diffusion process.
 
@@ -379,7 +380,7 @@ class WanI2V:
             if offload_model:
                 torch.cuda.empty_cache()
 
-            for _, t in enumerate(tqdm(timesteps)):
+            for step_idx, t in enumerate(tqdm(timesteps)):
                 latent_model_input = [latent.to(self.device)]
                 timestep = [t]
 
@@ -390,16 +391,29 @@ class WanI2V:
                 sample_guide_scale = guide_scale[1] if t.item(
                 ) >= boundary else guide_scale[0]
 
-                noise_pred_cond = model(
-                    latent_model_input, t=timestep, **arg_c)[0]
-                if offload_model:
-                    torch.cuda.empty_cache()
-                noise_pred_uncond = model(
-                    latent_model_input, t=timestep, **arg_null)[0]
-                if offload_model:
-                    torch.cuda.empty_cache()
-                noise_pred = noise_pred_uncond + sample_guide_scale * (
-                    noise_pred_cond - noise_pred_uncond)
+                # CFG Truncate: 在最后几步跳过条件前传
+                is_final_steps = step_idx >= (len(timesteps) - cfg_truncate_steps)
+                
+                if is_final_steps:
+                    # 只进行无条件预测，跳过CFG
+                    noise_pred = model(
+                        latent_model_input, t=timestep, **arg_null)[0]
+                    if self.rank == 0:
+                        print(f"CFG Truncate: Step {step_idx+1}/{len(timesteps)}, 跳过条件前传")
+                    if offload_model:
+                        torch.cuda.empty_cache()
+                else:
+                    # 标准CFG流程
+                    noise_pred_cond = model(
+                        latent_model_input, t=timestep, **arg_c)[0]
+                    if offload_model:
+                        torch.cuda.empty_cache()
+                    noise_pred_uncond = model(
+                        latent_model_input, t=timestep, **arg_null)[0]
+                    if offload_model:
+                        torch.cuda.empty_cache()
+                    noise_pred = noise_pred_uncond + sample_guide_scale * (
+                        noise_pred_cond - noise_pred_uncond)
 
                 temp_x0 = sample_scheduler.step(
                     noise_pred.unsqueeze(0),

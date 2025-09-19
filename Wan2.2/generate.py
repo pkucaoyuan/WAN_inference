@@ -210,6 +210,11 @@ def _parse_args():
         default=None,
         help="Classifier free guidance scale.")
     parser.add_argument(
+        "--cfg_truncate_steps",
+        type=int,
+        default=5,
+        help="Number of final steps to skip conditional forward pass (CFG truncate). Set to 0 to disable.")
+    parser.add_argument(
         "--convert_model_dtype",
         action="store_true",
         default=False,
@@ -396,7 +401,8 @@ def generate(args):
             sampling_steps=args.sample_steps,
             guide_scale=args.sample_guide_scale,
             seed=args.base_seed,
-            offload_model=args.offload_model)
+            offload_model=args.offload_model,
+            cfg_truncate_steps=args.cfg_truncate_steps)
     elif "ti2v" in args.task:
         logging.info("Creating WanTI2V pipeline.")
         wan_ti2v = wan.WanTI2V(
@@ -484,7 +490,8 @@ def generate(args):
             sampling_steps=args.sample_steps,
             guide_scale=args.sample_guide_scale,
             seed=args.base_seed,
-            offload_model=args.offload_model)
+            offload_model=args.offload_model,
+            cfg_truncate_steps=args.cfg_truncate_steps)
 
     if rank == 0:
         if args.save_file is None:
