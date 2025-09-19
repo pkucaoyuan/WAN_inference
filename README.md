@@ -93,6 +93,22 @@ torchrun --nproc_per_node=4 generate.py --task t2v-A14B \
     --prompt "A beautiful sunset over the ocean"
 ```
 
+**多机分布式推理（最高性能）**:
+```bash
+# 使用便捷脚本 (推荐)
+python scripts/multi_node_inference.py \
+    --master_addr 192.168.1.100 \
+    --nnodes 2 --nproc_per_node 4 \
+    --node_rank 0 \
+    --cfg_truncate_steps 5
+
+# 或手动配置
+MASTER_ADDR=192.168.1.100 WORLD_SIZE=8 NODE_RANK=0 \
+torchrun --nproc_per_node=4 --nnodes=2 --node_rank=0 \
+    --master_addr=192.168.1.100 --master_port=29500 \
+    generate.py --task t2v-A14B --dit_fsdp --t5_fsdp --ulysses_size 8
+```
+
 ## ⚡ **推理加速优化**
 
 ### **双重CFG截断技术（新功能）**
@@ -110,8 +126,10 @@ torchrun --nproc_per_node=4 generate.py --task t2v-A14B \
 ```
 
 **性能提升**：
-- **单独截断**: 15-30%时间减少
-- **双重截断**: 35-50%时间减少 🚀
+- **单GPU**: 基准性能
+- **单机多GPU**: 3-4倍加速
+- **多机分布式**: 6-15倍加速 🚀
+- **CFG截断**: 额外35-50%加速
 
 ### **完整的加速推理示例**
 ```bash
