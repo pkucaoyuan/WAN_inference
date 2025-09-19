@@ -393,18 +393,32 @@ def generate(args):
         logging.info(f"Extended prompt: {args.prompt}")
 
     if "t2v" in args.task:
+        # GPU内存和错误处理优化
+        try:
+            torch.cuda.set_device(device)
+            torch.cuda.empty_cache()
+            # 设置更保守的内存分配
+            torch.cuda.set_per_process_memory_fraction(0.85)
+            # 启用内存池以减少碎片
+            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512'
+            if rank == 0:
+                print(f"🔧 GPU内存优化: 设备{device}, 内存分配85%")
+        except Exception as e:
+            if rank == 0:
+                print(f"⚠️ GPU设置警告: {e}")
+        
         # 快速加载优化
         if args.fast_loading:
             args.offload_model = False
             args.t5_cpu = False
             if rank == 0:
                 print("🚀 快速加载模式: 禁用模型卸载，所有模型常驻GPU")
-                # GPU预热和内存预分配
-                print("🔥 GPU预热中...")
-                torch.cuda.init()
-                torch.cuda.empty_cache()
-                # 预分配GPU内存
-                torch.cuda.set_per_process_memory_fraction(0.95)
+        
+        # 多GPU环境优化
+        if world_size > 1:
+            args.offload_model = False  # 多GPU时禁用模型卸载
+            if rank == 0:
+                print(f"🔧 多GPU优化: {world_size}GPU环境，自动禁用模型卸载")
         
         # 模型加载时间记录
         model_load_start = time.time()
