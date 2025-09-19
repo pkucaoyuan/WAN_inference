@@ -3,6 +3,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 import warnings
 from datetime import datetime
 
@@ -57,6 +58,19 @@ def _validate_args(args):
     assert args.ckpt_dir is not None, "Please specify the checkpoint directory."
     assert args.task in WAN_CONFIGS, f"Unsupport task: {args.task}"
     assert args.task in EXAMPLE_PROMPT, f"Unsupport task: {args.task}"
+    
+    # Frame number validation
+    if args.frame_num is not None and (args.frame_num - 1) % 4 != 0:
+        print(f"❌ 错误: frame_num必须满足4n+1公式，当前值{args.frame_num}无效")
+        print(f"💡 建议使用: 5, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57, 61, 65, 69, 73, 77, 81, 85...")
+        if args.frame_num == 1:
+            print(f"🔧 自动修正: frame_num从1改为5")
+            args.frame_num = 5
+        else:
+            # 自动修正到最近的有效值
+            n = max(1, round((args.frame_num - 1) / 4))
+            args.frame_num = 4 * n + 1
+            print(f"🔧 自动修正: frame_num改为{args.frame_num}")
 
     if args.prompt is None:
         args.prompt = EXAMPLE_PROMPT[args.task]["prompt"]
@@ -212,12 +226,12 @@ def _parse_args():
     parser.add_argument(
         "--cfg_truncate_steps",
         type=int,
-        default=5,
+        default=0,
         help="Number of final steps to skip conditional forward pass (CFG truncate). Set to 0 to disable.")
     parser.add_argument(
         "--cfg_truncate_high_noise_steps",
         type=int,
-        default=3,
+        default=0,
         help="Number of final steps in high-noise phase to skip conditional forward pass.")
     parser.add_argument(
         "--convert_model_dtype",
@@ -383,7 +397,9 @@ def generate(args):
         logging.info(f"Extended prompt: {args.prompt}")
 
     if "t2v" in args.task:
-        logging.info("Creating WanT2V pipeline.")
+        # 模型加载时间记录
+        model_load_start = time.time()
+        logging.info("Creating WanT2V pipeline...")
         wan_t2v = wan.WanT2V(
             config=cfg,
             checkpoint_dir=args.ckpt_dir,
@@ -395,8 +411,14 @@ def generate(args):
             t5_cpu=args.t5_cpu,
             convert_model_dtype=args.convert_model_dtype,
         )
+        model_load_time = time.time() - model_load_start
+        if rank == 0:
+            print(f"⏱️ 模型加载耗时: {model_load_time:.2f}秒")
 
-        logging.info(f"Generating video ...")
+        # 推理时间记录
+        inference_start = time.time()
+        logging.info(f"开始推理...")
+        print(f"🎬 CFG截断配置: 低噪声专家{args.cfg_truncate_steps}步, 高噪声专家{args.cfg_truncate_high_noise_steps}步")
         video = wan_t2v.generate(
             args.prompt,
             size=SIZE_CONFIGS[args.size],
@@ -409,6 +431,11 @@ def generate(args):
             offload_model=args.offload_model,
             cfg_truncate_steps=args.cfg_truncate_steps,
             cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps)
+        inference_time = time.time() - inference_start
+        if rank == 0:
+            print(f"⚡ 纯推理耗时: {inference_time:.2f}秒")
+            print(f"📊 总耗时: {model_load_time + inference_time:.2f}秒")
+            print(f"📈 推理效率: {args.frame_num/inference_time:.2f} 帧/秒")
     elif "ti2v" in args.task:
         logging.info("Creating WanTI2V pipeline.")
         wan_ti2v = wan.WanTI2V(
