@@ -211,7 +211,8 @@ class WanT2V:
                  n_prompt="",
                  seed=-1,
                  offload_model=True,
-                 cfg_truncate_steps=5):
+                 cfg_truncate_steps=5,
+                 cfg_truncate_high_noise_steps=3):
         r"""
         Generates video frames from text prompt using diffusion process.
 
@@ -241,6 +242,9 @@ class WanT2V:
             cfg_truncate_steps (`int`, *optional*, defaults to 5):
                 Number of final steps to skip conditional forward pass (CFG truncate).
                 In the last N steps, only unconditional prediction is used to speed up inference.
+            cfg_truncate_high_noise_steps (`int`, *optional*, defaults to 3):
+                Number of final steps in high-noise phase to skip conditional forward pass.
+                Applied before switching to low-noise expert.
 
         Returns:
             torch.Tensor:
@@ -347,15 +351,24 @@ class WanT2V:
                 sample_guide_scale = guide_scale[1] if t.item(
                 ) >= boundary else guide_scale[0]
 
-                # CFG Truncate: 在最后几步跳过条件前传
+                # 双重CFG Truncate策略
                 is_final_steps = step_idx >= (len(timesteps) - cfg_truncate_steps)
                 
-                if is_final_steps:
-                    # 只进行无条件预测，跳过CFG
+                # 检查是否在高噪声专家的最后几步
+                is_high_noise_phase = t.item() >= boundary
+                high_noise_steps = [i for i, ts in enumerate(timesteps) if ts.item() >= boundary]
+                is_high_noise_final = (is_high_noise_phase and 
+                                     step_idx >= (max(high_noise_steps) - cfg_truncate_high_noise_steps + 1))
+                
+                if is_final_steps or is_high_noise_final:
+                    # CFG截断：只进行无条件预测
                     noise_pred = model(
                         latent_model_input, t=timestep, **arg_null)[0]
                     if self.rank == 0:
-                        print(f"CFG Truncate: Step {step_idx+1}/{len(timesteps)}, 跳过条件前传")
+                        if is_high_noise_final:
+                            print(f"高噪声专家CFG截断: Step {step_idx+1}/{len(timesteps)}, t={t.item():.0f}")
+                        else:
+                            print(f"低噪声专家CFG截断: Step {step_idx+1}/{len(timesteps)}, t={t.item():.0f}")
                 else:
                     # 标准CFG流程
                     noise_pred_cond = model(
