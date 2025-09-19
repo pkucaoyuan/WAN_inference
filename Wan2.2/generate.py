@@ -428,7 +428,7 @@ def generate(args):
         inference_start = time.time()
         logging.info(f"开始推理...")
         print(f"🎬 CFG截断配置: 低噪声专家{args.cfg_truncate_steps}步, 高噪声专家{args.cfg_truncate_high_noise_steps}步")
-        video = wan_t2v.generate(
+        video, total_switch_time = wan_t2v.generate(
             args.prompt,
             size=SIZE_CONFIGS[args.size],
             frame_num=args.frame_num,
@@ -440,11 +440,17 @@ def generate(args):
             offload_model=args.offload_model,
             cfg_truncate_steps=args.cfg_truncate_steps,
             cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps)
-        inference_time = time.time() - inference_start
+        total_inference_time = time.time() - inference_start
+        pure_inference_time = total_inference_time - total_switch_time
+        
         if rank == 0:
-            print(f"⚡ 纯推理耗时: {inference_time:.2f}秒")
-            print(f"📊 总耗时: {model_load_time + inference_time:.2f}秒")
-            print(f"📈 推理效率: {args.frame_num/inference_time:.2f} 帧/秒")
+            print(f"🔄 专家切换总耗时: {total_switch_time:.2f}秒")
+            print(f"⚡ 纯推理耗时: {pure_inference_time:.2f}秒")
+            print(f"📊 总推理耗时: {total_inference_time:.2f}秒")
+            print(f"📈 推理速度: {args.sample_steps/pure_inference_time:.3f} 步/秒")
+            print(f"📈 每步耗时: {pure_inference_time/args.sample_steps:.3f} 秒/步")
+            if args.frame_num > 1:
+                print(f"🎬 帧生成效率: {args.frame_num/pure_inference_time:.3f} 帧/秒")
     elif "ti2v" in args.task:
         logging.info("Creating WanTI2V pipeline.")
         wan_ti2v = wan.WanTI2V(
@@ -597,10 +603,15 @@ def generate(args):
             },
             "性能数据": {
                 "模型加载耗时(秒)": f"{model_load_time:.2f}",
-                "纯推理耗时(秒)": f"{inference_time:.2f}",
-                "总耗时(秒)": f"{model_load_time + inference_time:.2f}",
-                "推理效率(帧/秒)": f"{args.frame_num/inference_time:.3f}",
-                "每帧耗时(秒)": f"{inference_time/args.frame_num:.3f}"
+                "专家切换总耗时(秒)": f"{total_switch_time:.2f}",
+                "纯推理耗时(秒)": f"{pure_inference_time:.2f}",
+                "总推理耗时(秒)": f"{total_inference_time:.2f}",
+                "总耗时(秒)": f"{model_load_time + total_inference_time:.2f}",
+                "推理速度(步/秒)": f"{args.sample_steps/pure_inference_time:.3f}",
+                "每步耗时(秒/步)": f"{pure_inference_time/args.sample_steps:.3f}",
+                "帧生成效率(帧/秒)": f"{args.frame_num/pure_inference_time:.3f}" if args.frame_num > 1 else "单帧生成",
+                "每帧纯推理耗时(秒)": f"{pure_inference_time/args.frame_num:.3f}",
+                "每帧总耗时(秒)": f"{total_inference_time/args.frame_num:.3f}"
             }
         }
         

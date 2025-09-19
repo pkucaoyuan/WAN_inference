@@ -129,6 +129,7 @@ class WanT2V:
             self.sp_size = 1
 
         self.sample_neg_prompt = config.sample_neg_prompt
+        self.total_switch_time = 0.0  # 记录总的专家切换时间
 
     def _configure_model(self, model, use_sp, dit_fsdp, shard_fn,
                          convert_model_dtype):
@@ -215,6 +216,7 @@ class WanT2V:
                 
             if need_switch and self.rank == 0:
                 switch_time = time.time() - switch_start
+                self.total_switch_time += switch_time
                 print(f"⏱️ 专家切换耗时: {switch_time:.3f}秒")
                 
         return getattr(self, required_model_name)
@@ -422,4 +424,4 @@ class WanT2V:
         if dist.is_initialized():
             dist.barrier()
 
-        return videos[0] if self.rank == 0 else None
+        return videos[0] if self.rank == 0 else None, getattr(self, 'total_switch_time', 0.0)

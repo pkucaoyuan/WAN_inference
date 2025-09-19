@@ -124,6 +124,7 @@ class WanI2V:
             self.sp_size = 1
 
         self.sample_neg_prompt = config.sample_neg_prompt
+        self.total_switch_time = 0.0  # 记录总的专家切换时间
 
     def _configure_model(self, model, use_sp, dit_fsdp, shard_fn,
                          convert_model_dtype):
@@ -193,14 +194,26 @@ class WanI2V:
             required_model_name = 'low_noise_model'
             offload_model_name = 'high_noise_model'
         if offload_model or self.init_on_cpu:
+            # 检查是否需要切换
+            current_device = next(getattr(self, required_model_name).parameters()).device.type
+            need_switch = current_device == 'cpu'
+            
+            if need_switch and self.rank == 0:
+                switch_start = time.time()
+                print(f"🔄 专家切换: {required_model_name} (t={t.item():.0f})")
+            
             if next(getattr(
                     self,
                     offload_model_name).parameters()).device.type == 'cuda':
                 getattr(self, offload_model_name).to('cpu')
-            if next(getattr(
-                    self,
-                    required_model_name).parameters()).device.type == 'cpu':
+            if current_device == 'cpu':
                 getattr(self, required_model_name).to(self.device)
+                
+            if need_switch and self.rank == 0:
+                switch_time = time.time() - switch_start
+                self.total_switch_time += switch_time
+                print(f"⏱️ 专家切换耗时: {switch_time:.3f}秒")
+                
         return getattr(self, required_model_name)
 
     def generate(self,
