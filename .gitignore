@@ -72,5 +72,9 @@ temp/
 */T2V_A14B_weights/
 */weights/
 
+# 推理输出目录
+outputs/
+*/outputs/
+
 # Git LFS追踪的大文件
 *.spiece.model

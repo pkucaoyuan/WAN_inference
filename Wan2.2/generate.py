@@ -1,11 +1,13 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import argparse
+import json
 import logging
 import os
 import sys
 import time
 import warnings
 from datetime import datetime
+from pathlib import Path
 
 warnings.filterwarnings('ignore')
 
@@ -535,26 +537,86 @@ def generate(args):
             cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps)
 
     if rank == 0:
+        # 创建输出文件夹结构
+        output_base_dir = Path("./outputs")
+        output_base_dir.mkdir(exist_ok=True)
+        
+        # 创建本次推理的子文件夹
+        formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        formatted_prompt = args.prompt.replace(" ", "_").replace("/", "_")[:30]
+        run_folder = output_base_dir / f"{args.task}_{formatted_time}_{formatted_prompt}"
+        run_folder.mkdir(exist_ok=True)
+        
+        # 视频文件路径
         if args.save_file is None:
-            formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-            formatted_prompt = args.prompt.replace(" ", "_").replace("/",
-                                                                     "_")[:50]
-            suffix = '.mp4'
-            args.save_file = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{formatted_prompt}_{formatted_time}" + suffix
-
-        logging.info(f"Saving generated video to {args.save_file}")
+            video_filename = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{formatted_time}.mp4"
+        else:
+            video_filename = Path(args.save_file).name
+        video_path = run_folder / video_filename
+        
+        # 保存视频
+        logging.info(f"Saving generated video to {video_path}")
         save_video(
             tensor=video[None],
-            save_file=args.save_file,
+            save_file=str(video_path),
             fps=cfg.sample_fps,
             nrow=1,
             normalize=True,
             value_range=(-1, 1))
+        
+        # 创建推理记录文件
+        record_data = {
+            "推理信息": {
+                "时间戳": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "任务类型": args.task,
+                "模型路径": args.ckpt_dir,
+                "输出视频": video_filename
+            },
+            "参数设置": {
+                "提示词": args.prompt,
+                "分辨率": args.size,
+                "帧数": args.frame_num,
+                "采样步数": args.sample_steps,
+                "CFG强度": args.sample_guide_scale,
+                "CFG截断步数": args.cfg_truncate_steps,
+                "高噪声CFG截断": args.cfg_truncate_high_noise_steps,
+                "噪声调度偏移": args.sample_shift,
+                "采样器": args.sample_solver,
+                "随机种子": args.base_seed,
+                "快速加载": args.fast_loading,
+                "模型卸载": args.offload_model,
+                "T5_CPU": args.t5_cpu,
+                "数据类型转换": args.convert_model_dtype
+            },
+            "分布式设置": {
+                "多GPU": dist.is_initialized() if 'dist' in globals() else False,
+                "GPU数量": dist.get_world_size() if dist.is_initialized() else 1,
+                "DiT_FSDP": args.dit_fsdp,
+                "T5_FSDP": args.t5_fsdp,
+                "Ulysses大小": args.ulysses_size
+            },
+            "性能数据": {
+                "模型加载耗时(秒)": f"{model_load_time:.2f}",
+                "纯推理耗时(秒)": f"{inference_time:.2f}",
+                "总耗时(秒)": f"{model_load_time + inference_time:.2f}",
+                "推理效率(帧/秒)": f"{args.frame_num/inference_time:.3f}",
+                "每帧耗时(秒)": f"{inference_time/args.frame_num:.3f}"
+            }
+        }
+        
+        # 保存记录文件
+        record_path = run_folder / "inference_record.json"
+        with open(record_path, 'w', encoding='utf-8') as f:
+            json.dump(record_data, f, ensure_ascii=False, indent=2)
+        
+        print(f"📁 输出保存到: {run_folder}")
+        print(f"🎬 视频文件: {video_path}")
+        print(f"📊 记录文件: {record_path}")
         if "s2v" in args.task:
             if args.enable_tts is False:
-                merge_video_audio(video_path=args.save_file, audio_path=args.audio)
+                merge_video_audio(video_path=str(video_path), audio_path=args.audio)
             else:
-                merge_video_audio(video_path=args.save_file, audio_path="tts.wav")
+                merge_video_audio(video_path=str(video_path), audio_path="tts.wav")
     del video
 
     torch.cuda.synchronize()
