@@ -189,7 +189,8 @@ class WanAttentionBlock(nn.Module):
                  window_size=(-1, -1),
                  qk_norm=True,
                  cross_attn_norm=False,
-                 eps=1e-6):
+                 eps=1e-6,
+                 enable_token_pruning=False):
         super().__init__()
         self.dim = dim
         self.ffn_dim = ffn_dim
@@ -198,6 +199,7 @@ class WanAttentionBlock(nn.Module):
         self.qk_norm = qk_norm
         self.cross_attn_norm = cross_attn_norm
         self.eps = eps
+        self.enable_token_pruning = enable_token_pruning
 
         # layers
         self.norm1 = WanLayerNorm(dim, eps)
