@@ -390,18 +390,29 @@ class WanT2V:
             token_pruner = None
             if enable_token_pruning and output_dir is not None:
                 from .modules.adaptive_token_pruning import AdaptiveTokenPruning
+                
+                # 计算高噪声专家的实际结束步数
+                high_noise_steps = [i for i, ts in enumerate(timesteps) if ts.item() >= boundary]
+                actual_high_noise_end = max(high_noise_steps) if high_noise_steps else len(timesteps) - 1
+                
+                # 如果用户指定的end_layer超出高噪声专家范围，自动调整
+                effective_end_layer = min(pruning_end_layer, actual_high_noise_end)
+                
                 token_pruner = AdaptiveTokenPruning(
                     baseline_steps=pruning_baseline_steps,
                     percentile_threshold=pruning_threshold,
                     start_layer=pruning_start_layer,
-                    end_layer=pruning_end_layer,
+                    end_layer=effective_end_layer,
                     expert_name="high_noise"
                 )
                 if self.rank == 0:
                     print(f"🧠 Token裁剪器已启用")
                     print(f"   📊 百分位阈值: {pruning_threshold}% (越高越激进)")
                     print(f"   🔢 基准步数: {pruning_baseline_steps}")
-                    print(f"   📍 裁剪范围: Layer {pruning_start_layer}-{pruning_end_layer}")
+                    print(f"   🎯 高噪声专家结束步数: {actual_high_noise_end + 1}")
+                    print(f"   📍 裁剪范围: Layer {pruning_start_layer}-{effective_end_layer}")
+                    if effective_end_layer != pruning_end_layer:
+                        print(f"   ⚠️ 结束层已自动调整: {pruning_end_layer} → {effective_end_layer} (高噪声专家边界)")
 
             for step_idx, t in enumerate(tqdm(timesteps)):
                 latent_model_input = latents

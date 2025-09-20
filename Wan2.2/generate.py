@@ -257,8 +257,8 @@ def _parse_args():
     parser.add_argument(
         "--pruning_end_layer",
         type=int,
-        default=35,
-        help="Layer to end token pruning.")
+        default=999,
+        help="Layer to end token pruning (will be automatically limited to high-noise expert end step).")
 
     # following args only works for s2v
     parser.add_argument(
