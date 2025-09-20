@@ -441,8 +441,51 @@ class WanT2V:
                 if token_pruner is not None and is_high_noise_phase:
                     expert_name = "high_noise"
                     
+                    # 首先检查是否有上一步的预测结果
+                    if hasattr(self, '_next_step_frozen_indices') and hasattr(self, '_next_step_active_indices'):
+                        # 使用上一步预测的结果进行当前步的token裁剪
+                        frozen_indices = self._next_step_frozen_indices
+                        active_indices = self._next_step_active_indices
+                        
+                        # 创建active_mask
+                        model_seq_len = seq_len
+                        current_active_mask = torch.ones(model_seq_len, dtype=torch.bool, device=latents[0].device)
+                        
+                        if len(frozen_indices) > 0:
+                            # 设置冻结token为False
+                            image_token_end = min(len(frozen_indices) + len(active_indices), model_seq_len)
+                            if len(frozen_indices) > 0:
+                                valid_frozen_indices = frozen_indices[frozen_indices < image_token_end]
+                                if len(valid_frozen_indices) > 0:
+                                    current_active_mask[valid_frozen_indices] = False
+                            
+                            if self.rank == 0:
+                                active_count = len(active_indices)
+                                frozen_count = len(frozen_indices)
+                                total_image_tokens = active_count + frozen_count
+                                
+                                print(f"🔥 Step {step_idx+1} 使用预测的Token裁剪:")
+                                print(f"   📊 激活Token: {active_count}/{total_image_tokens} ({100*active_count/total_image_tokens:.1f}%)")
+                                print(f"   🧊 冻结Token: {frozen_count} 个 (基于上一步预测)")
+                                print(f"   💾 实际节省计算: {100*frozen_count/total_image_tokens:.1f}%")
+                                print(f"   🎯 使用上一步的变化分数预测")
+                                
+                                # 计算实际的节省
+                                ffn_savings = 1 - (active_count / total_image_tokens)
+                                update_savings = 1 - (active_count / total_image_tokens)
+                                
+                                print(f"   ⚡ FFN计算节省: {100*ffn_savings:.1f}%")
+                                print(f"   ⚡ Hidden State更新节省: {100*update_savings:.1f}%") 
+                                print(f"   📝 Self-Attention: 完整计算（所有token参与）")
+                                print(f"   📝 Cross-Attention: 完整计算（所有token参与）")
+                                print(f"   🧊 冻结Token: 跳过FFN计算，保持hidden state不变")
+                        
+                        # 清除预测结果，避免重复使用
+                        delattr(self, '_next_step_frozen_indices')
+                        delattr(self, '_next_step_active_indices')
+                    
                     # 前1-4步：只保存latents，不收集统计
-                    if step_idx < token_pruner.baseline_steps - 1:
+                    elif step_idx < token_pruner.baseline_steps - 1:
                         # 保存当前latents用于后续比较
                         self._prev_latents = latents[0].clone()
                         if self.rank == 0:
@@ -574,63 +617,41 @@ class WanT2V:
                             if self.rank == 0:
                                 print(f"✅ Step {step_idx+1} Token数量验证: 预期={actual_token_count}, 实际处理={len(token_changes)}")
                             
-                            # 基于真实变化幅度与第5步阈值比较进行裁剪
-                            active_token_indices = []
-                            frozen_token_indices = []
+                            # 基于当前步的变化分数，预测下一步的冻结token
+                            next_step_frozen_indices = []
+                            next_step_active_indices = []
                             
                             for i, change_val in enumerate(token_changes):
-                                # 与第5步确定的动态阈值比较
-                                if change_val.item() >= token_pruner.dynamic_threshold:
-                                    active_token_indices.append(i)  # 变化大于阈值，保持激活
+                                # 与第5步确定的动态阈值比较，决定下一步是否冻结
+                                if change_val.item() < token_pruner.dynamic_threshold:
+                                    next_step_frozen_indices.append(i)  # 下一步将被冻结
                                 else:
-                                    frozen_token_indices.append(i)  # 变化小于阈值，冻结
+                                    next_step_active_indices.append(i)  # 下一步保持激活
                             
-                            # 确保至少有一些token保持激活
-                            if len(active_token_indices) == 0:
+                            # 确保下一步至少有一些token保持激活
+                            if len(next_step_active_indices) == 0:
                                 # 如果所有token都低于阈值，保留变化最大的前10%
                                 sorted_indices = sorted(range(len(token_changes)), 
                                                        key=lambda i: token_changes[i].item(), reverse=True)
                                 min_active = max(len(token_changes) // 10, 1)
-                                active_token_indices = sorted_indices[:min_active]
+                                next_step_active_indices = sorted_indices[:min_active]
+                                next_step_frozen_indices = [i for i in range(len(token_changes)) if i not in next_step_active_indices]
                             
-                            # 创建完整的active_mask（用于模型计算）
-                            # 使用模型的实际seq_len参数
-                            model_seq_len = seq_len  # 模型forward中的seq_len参数
-                            current_active_mask = torch.ones(model_seq_len, dtype=torch.bool, device=latents[0].device)
+                            # 存储预测结果供下一步使用
+                            self._next_step_frozen_indices = torch.tensor(next_step_frozen_indices, device=latents[0].device)
+                            self._next_step_active_indices = torch.tensor(next_step_active_indices, device=latents[0].device)
                             
-                            # 设置非激活token（只针对实际的图像token范围）
-                            image_token_end = min(len(token_changes), model_seq_len)
-                            inactive_indices = [i for i in range(image_token_end) if i not in active_token_indices]
-                            
-                            if inactive_indices:
-                                current_active_mask[inactive_indices] = False
+                            if self.rank == 0:
+                                next_frozen_count = len(next_step_frozen_indices)
+                                next_active_count = len(next_step_active_indices)
+                                total_image_tokens = len(token_changes)
                                 
-                                # 更新token_pruner的冻结列表（用于日志）
-                                for idx in inactive_indices:
-                                    token_pruner.frozen_tokens.add(idx)
-                                
-                                if self.rank == 0:
-                                    active_count = len(active_token_indices)
-                                    total_image_tokens = image_token_end
-                                    frozen_count = len(inactive_indices)
-                                    
-                                    print(f"🔥 Step {step_idx+1} 基于阈值的Token裁剪:")
-                                    print(f"   📊 激活Token: {active_count}/{total_image_tokens} ({100*active_count/total_image_tokens:.1f}%)")
-                                    print(f"   🧊 冻结Token: {frozen_count} 个 (变化 < {token_pruner.dynamic_threshold:.4f})")
-                                    print(f"   💾 实际节省计算: {100*frozen_count/total_image_tokens:.1f}%")
-                                    print(f"   🎯 基于第5步动态阈值: {token_pruner.dynamic_threshold:.4f}")
-                                    print(f"   📈 自适应裁剪: 变化小的token自动冻结")
-                                    
-                                    # 计算实际的节省（CAT算法 + QKV缓存优化）
-                                    ffn_savings = 1 - (active_count / total_image_tokens)             # FFN: O(N) -> O(k)
-                                    update_savings = 1 - (active_count / total_image_tokens)          # Hidden state更新节省
-                                    qkv_computation_savings = frozen_count / total_image_tokens       # QKV计算节省
-                                    
-                                    print(f"   ⚡ FFN计算节省: {100*ffn_savings:.1f}%")
-                                    print(f"   ⚡ Hidden State更新节省: {100*update_savings:.1f}%") 
-                                    print(f"   📝 Self-Attention: 完整计算（所有token参与）")
-                                    print(f"   📝 Cross-Attention: 完整计算（所有token参与）")
-                                    print(f"   🧊 冻结Token: 跳过FFN计算，保持hidden state不变")
+                                print(f"🔮 Step {step_idx+1} 预测下一步Token裁剪:")
+                                print(f"   📊 下一步激活Token: {next_active_count}/{total_image_tokens} ({100*next_active_count/total_image_tokens:.1f}%)")
+                                print(f"   🧊 下一步冻结Token: {next_frozen_count} 个 (变化 < {token_pruner.dynamic_threshold:.4f})")
+                                print(f"   💾 预期节省计算: {100*next_frozen_count/total_image_tokens:.1f}%")
+                                print(f"   🎯 基于当前步变化分数预测")
+                                print(f"   📈 下一步将缓存冻结token的hidden state")
                         
                         # 保存当前latents
                         self._prev_latents = latents[0].clone()
