@@ -310,7 +310,11 @@ class WanAttentionBlock(nn.Module):
                 def cross_attn_ffn_pruned(x, context, context_lens, e, active_indices):
                     # Algorithm 1: Cross-attention所有token参与，但只更新激活token
                     cross_out_full = self.cross_attn(self.norm3(x), context, context_lens)
-                    x = x + cross_out_full  # 所有token都接收cross-attention结果
+                    
+                    # ✅ 修复：只有激活token接收cross-attention结果
+                    cross_out = torch.zeros_like(x)
+                    cross_out[:, active_indices, :] = cross_out_full[:, active_indices, :]
+                    x = x + cross_out  # 只有激活token接收cross-attention结果
                     
                     # Algorithm 1: Line 4: 只有选中token (Ts,t) 通过MLP(FFN)更新
                     x_active = x[:, active_indices, :]

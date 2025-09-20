@@ -509,7 +509,8 @@ class WanT2V:
                         for idx in frozen_indices.cpu().tolist():
                             token_pruner.frozen_tokens.add(idx)
                         
-                        # 清除预测结果，避免重复使用
+                        # 保存当前冻结状态供下一步使用，然后清除预测结果
+                        self._current_frozen_indices = frozen_indices  # 保存当前实际冻结的token
                         delattr(self, '_next_step_frozen_indices')
                         delattr(self, '_next_step_active_indices')
                     
@@ -699,7 +700,9 @@ class WanT2V:
                             # 正确的累积冻结逻辑：冻结token保持冻结，只评估激活token
                             # 获取当前已冻结的token集合
                             current_frozen_set = set()
-                            if hasattr(self, '_next_step_frozen_indices'):
+                            if hasattr(self, '_current_frozen_indices'):
+                                current_frozen_set = set(self._current_frozen_indices.cpu().tolist())
+                            elif hasattr(self, '_next_step_frozen_indices'):
                                 current_frozen_set = set(self._next_step_frozen_indices.cpu().tolist())
                             
                             # 只对当前激活的token评估变化，冻结token自动保持冻结
@@ -741,6 +744,9 @@ class WanT2V:
                             self._next_step_frozen_indices = next_step_frozen_indices
                             self._next_step_active_indices = next_step_active_indices
                             
+                            # 保存当前步的冻结状态（用于状态传递）
+                            self._current_frozen_indices = next_step_frozen_indices
+                            
                             # 更新token_pruner的累积冻结状态
                             for idx in all_frozen_indices:
                                 token_pruner.frozen_tokens.add(idx)
@@ -752,10 +758,9 @@ class WanT2V:
                                 
                                 print(f"🔮 Step {step_idx+1} 预测下一步Token裁剪:")
                                 print(f"   📊 下一步激活Token: {next_active_count}/{total_image_tokens} ({100*next_active_count/total_image_tokens:.1f}%)")
-                                print(f"   🧊 下一步冻结Token: {next_frozen_count} 个 (变化 < {token_pruner.dynamic_threshold:.4f})")
+                                print(f"   🧊 下一步冻结Token: {next_frozen_count} 个")
                                 print(f"   💾 预期节省计算: {100*next_frozen_count/total_image_tokens:.1f}%")
-                                print(f"   🎯 基于当前步变化分数预测")
-                                print(f"   📈 下一步将缓存冻结token的hidden state")
+                                print(f"   🎯 累积冻结策略: 已冻结保持+新增低变化token")
                                 print(f"   ⚡ GPU tensor操作: 避免3600次.item()调用")
                         
                         # 保存当前latents
