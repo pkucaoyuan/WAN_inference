@@ -481,7 +481,7 @@ def generate(args):
         run_folder = output_base_dir / f"{args.task}_{formatted_time}_{formatted_prompt}"
         run_folder.mkdir(exist_ok=True)
         
-        video, total_switch_time = wan_t2v.generate(
+        video, timing_info = wan_t2v.generate(
             args.prompt,
             size=SIZE_CONFIGS[args.size],
             frame_num=args.frame_num,
@@ -500,6 +500,11 @@ def generate(args):
             pruning_start_layer=args.pruning_start_layer,
             pruning_end_layer=args.pruning_end_layer)
         total_inference_time = time.time() - inference_start
+        
+        # 提取时间信息
+        total_switch_time = timing_info.get('total_switch_time', 0.0)
+        step_timings = timing_info.get('step_timings', [])
+        
         pure_inference_time = total_inference_time - total_switch_time
         
         if rank == 0:
@@ -666,7 +671,8 @@ def generate(args):
                 "每步耗时(秒/步)": f"{pure_inference_time/args.sample_steps:.3f}",
                 "帧生成效率(帧/秒)": f"{args.frame_num/pure_inference_time:.3f}" if args.frame_num > 1 else "单帧生成",
                 "每帧纯推理耗时(秒)": f"{pure_inference_time/args.frame_num:.3f}",
-                "每帧总耗时(秒)": f"{total_inference_time/args.frame_num:.3f}"
+                "每帧总耗时(秒)": f"{total_inference_time/args.frame_num:.3f}",
+                "每步详细时间": step_timings  # 添加每步时间记录
             }
         }
         

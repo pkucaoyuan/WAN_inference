@@ -37,11 +37,14 @@ class AdaptiveTokenPruning:
             'max': 0.0, 
             'sum': 0.0, 
             'count': 0,
-            'values': []  # 存储所有真实变化分数用于计算百分位数
+            'values': []  # 仅在计算阈值时临时存储，不输出到文件
         }
         
         # 第baseline_steps步的所有token真实变化评分（用于确定动态阈值）
         self.baseline_scores = []
+        
+        # 每步时间记录
+        self.step_timings = []
         
     def update_change_score_statistics(self, change_score):
         """更新真实变化分数统计信息"""
@@ -106,13 +109,23 @@ class AdaptiveTokenPruning:
     
     def get_pruning_summary(self):
         """获取修剪过程的详细总结"""
+        # 创建不包含详细score值的统计信息
+        stats_summary = {
+            'min': self.change_score_stats.get('min', 0),
+            'max': self.change_score_stats.get('max', 0),
+            'sum': self.change_score_stats.get('sum', 0),
+            'count': self.change_score_stats.get('count', 0),
+            'avg': self.change_score_stats.get('sum', 0) / max(self.change_score_stats.get('count', 1), 1)
+            # 不包含'values'数组，避免输出3600个score值
+        }
+        
         summary = {
             'total_frozen_tokens': len(self.frozen_tokens),
             'frozen_token_list': list(self.frozen_tokens),
             'dynamic_threshold': self.dynamic_threshold,
             'percentile_threshold': self.percentile_threshold,
             'baseline_steps': self.baseline_steps,
-            'change_score_stats': dict(self.change_score_stats)
+            'change_score_stats': stats_summary  # 只包含统计信息，不包含原始数据
         }
         return summary
     

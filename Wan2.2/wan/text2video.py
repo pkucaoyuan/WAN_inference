@@ -149,6 +149,7 @@ class WanT2V:
 
         self.sample_neg_prompt = config.sample_neg_prompt
         self.total_switch_time = 0.0  # 记录总的专家切换时间
+        self.step_timings = []  # 记录每步推理时间
 
     def _configure_model(self, model, use_sp, dit_fsdp, shard_fn,
                          convert_model_dtype):
@@ -416,7 +417,9 @@ class WanT2V:
                     if effective_end_layer != pruning_end_layer:
                         print(f"   ⚠️ 结束层已自动调整: {pruning_end_layer} → {effective_end_layer} (高噪声专家边界)")
 
+            import time
             for step_idx, t in enumerate(tqdm(timesteps)):
+                step_start_time = time.time()  # 记录每步开始时间
                 latent_model_input = latents
                 timestep = [t]
 
@@ -501,6 +504,10 @@ class WanT2V:
                                 print(f"   📝 Self-Attention: 混合计算（新QKV + 缓存QKV）")
                                 print(f"   📝 Cross-Attention: 完整计算（所有token参与）")
                                 print(f"   🧊 冻结Token: 跳过FFN+QKV投影，保持hidden state不变")
+                        
+                        # 更新token_pruner的累积冻结状态
+                        for idx in frozen_indices.cpu().tolist():
+                            token_pruner.frozen_tokens.add(idx)
                         
                         # 清除预测结果，避免重复使用
                         delattr(self, '_next_step_frozen_indices')
@@ -689,13 +696,29 @@ class WanT2V:
                             threshold_tensor = torch.tensor(token_pruner.dynamic_threshold, 
                                                           device=token_changes.device, dtype=token_changes.dtype)
                             
-                            # 使用GPU tensor比较，避免.item()调用
-                            frozen_mask = token_changes < threshold_tensor  # [3600] boolean tensor
-                            active_mask = ~frozen_mask  # 取反
+                            # 累积式冻结逻辑：已冻结的token保持冻结，新的低变化token加入冻结
+                            # 获取当前已冻结的token集合
+                            current_frozen_set = set()
+                            if hasattr(self, '_next_step_frozen_indices'):
+                                current_frozen_set = set(self._next_step_frozen_indices.cpu().tolist())
                             
-                            # 使用torch.where获取索引，避免Python循环
-                            next_step_frozen_indices = torch.where(frozen_mask)[0]  # GPU tensor
-                            next_step_active_indices = torch.where(active_mask)[0]   # GPU tensor
+                            # 基于变化分数找出新的候选冻结token
+                            new_frozen_mask = token_changes < threshold_tensor  # [3600] boolean tensor
+                            new_frozen_candidates = torch.where(new_frozen_mask)[0]
+                            
+                            # 合并：已冻结 + 新冻结候选
+                            all_frozen_indices = list(current_frozen_set)
+                            for idx in new_frozen_candidates.cpu().tolist():
+                                if idx not in current_frozen_set:
+                                    all_frozen_indices.append(idx)
+                            
+                            # 生成最终的冻结和激活索引
+                            next_step_frozen_indices = torch.tensor(all_frozen_indices, device=token_changes.device)
+                            all_indices = torch.arange(len(token_changes), device=token_changes.device)
+                            active_mask = torch.ones(len(token_changes), dtype=torch.bool, device=token_changes.device)
+                            if len(all_frozen_indices) > 0:
+                                active_mask[all_frozen_indices] = False
+                            next_step_active_indices = torch.where(active_mask)[0]
                             
                             # 确保下一步至少有一些token保持激活
                             if len(next_step_active_indices) == 0:
@@ -708,6 +731,10 @@ class WanT2V:
                             # 存储预测结果供下一步使用（已经是GPU tensor）
                             self._next_step_frozen_indices = next_step_frozen_indices
                             self._next_step_active_indices = next_step_active_indices
+                            
+                            # 更新token_pruner的累积冻结状态
+                            for idx in all_frozen_indices:
+                                token_pruner.frozen_tokens.add(idx)
                             
                             if self.rank == 0:
                                 next_frozen_count = len(next_step_frozen_indices)
@@ -761,6 +788,22 @@ class WanT2V:
                     return_dict=False,
                     generator=seed_g)[0]
                 latents = [temp_x0.squeeze(0)]
+                
+                # 记录每步推理时间
+                step_end_time = time.time()
+                step_duration = step_end_time - step_start_time
+                step_timing = {
+                    'step': step_idx + 1,
+                    'timestep': t.item(),
+                    'duration': step_duration,
+                    'is_high_noise': is_high_noise_phase,
+                    'expert': 'high_noise' if is_high_noise_phase else 'low_noise'
+                }
+                self.step_timings.append(step_timing)
+                
+                # 如果启用token裁剪，也记录到token_pruner中
+                if token_pruner is not None:
+                    token_pruner.step_timings.append(step_timing)
 
             x0 = latents
             if offload_model:
@@ -791,4 +834,10 @@ class WanT2V:
             except Exception as e:
                 print(f"⚠️ Token裁剪日志保存失败: {e}")
 
-        return videos[0] if self.rank == 0 else None, getattr(self, 'total_switch_time', 0.0)
+        # 返回结果和时间信息
+        result_videos = videos[0] if self.rank == 0 else None
+        timing_info = {
+            'total_switch_time': getattr(self, 'total_switch_time', 0.0),
+            'step_timings': getattr(self, 'step_timings', [])
+        }
+        return result_videos, timing_info
