@@ -454,9 +454,11 @@ class WanT2V:
                         if step_idx > 0:  # 需要前一步的latents来计算变化
                             prev_latents = getattr(self, '_prev_latents', None)
                             if prev_latents is not None:
-                                # 计算token变化
+                                # 计算token变化（更稳定的相对变化计算）
                                 change_magnitude = torch.norm(latents[0] - prev_latents, dim=-1)
-                                relative_change = change_magnitude / (torch.norm(prev_latents, dim=-1) + 1e-8)
+                                prev_magnitude = torch.norm(prev_latents, dim=-1)
+                                # 使用更大的epsilon和clamp确保数值稳定性
+                                relative_change = change_magnitude / torch.clamp(prev_magnitude, min=1e-6)
                                 
                                 # 更新变化分数统计（基于真实token数量）
                                 C, F, H, W = latents[0].shape
@@ -498,15 +500,25 @@ class WanT2V:
                                 # 基于第5步的所有token变化计算动态阈值
                                 if len(all_token_changes) > 0:
                                     import numpy as np
-                                    # 过滤掉无效值
+                                    # 过滤掉无效值并统计
                                     valid_changes = [v for v in all_token_changes if not (np.isnan(v) or np.isinf(v))]
+                                    nan_count = sum(1 for v in all_token_changes if np.isnan(v))
+                                    inf_count = sum(1 for v in all_token_changes if np.isinf(v))
+                                    
+                                    if self.rank == 0:
+                                        print(f"🔍 Token变化值统计:")
+                                        print(f"   📊 总数: {len(all_token_changes)}")
+                                        print(f"   ✅ 有效值: {len(valid_changes)}")
+                                        print(f"   ❌ NaN值: {nan_count}")
+                                        print(f"   ❌ Inf值: {inf_count}")
+                                    
                                     if len(valid_changes) > 0:
                                         token_pruner.baseline_scores = valid_changes
                                         token_pruner.dynamic_threshold = token_pruner.calculate_dynamic_threshold()
                                         
                                         if self.rank == 0:
                                             print(f"🎯 动态阈值已确定: {token_pruner.dynamic_threshold:.4f} (第{token_pruner.percentile_threshold}百分位数)")
-                                            print(f"   📊 基于{len(valid_changes)}个token变化值计算")
+                                            print(f"   📊 基于{len(valid_changes)}个有效token变化值计算")
                                             print(f"   📈 变化范围: {min(valid_changes):.4f} - {max(valid_changes):.4f}")
                                     else:
                                         if self.rank == 0:
@@ -521,9 +533,11 @@ class WanT2V:
                     elif token_pruner.should_apply_pruning(step_idx, expert_name):
                         prev_latents = getattr(self, '_prev_latents', None)
                         if prev_latents is not None and token_pruner.dynamic_threshold is not None:
-                            # 计算真实的token变化幅度
+                            # 计算真实的token变化幅度（更稳定的相对变化计算）
                             change_magnitude = torch.norm(latents[0] - prev_latents, dim=-1)
-                            relative_change = change_magnitude / (torch.norm(prev_latents, dim=-1) + 1e-8)
+                            prev_magnitude = torch.norm(prev_latents, dim=-1)
+                            # 使用更大的epsilon和clamp确保数值稳定性
+                            relative_change = change_magnitude / torch.clamp(prev_magnitude, min=1e-6)
                             
                             # 获取实际的token序列长度
                             # latents[0]形状: [C, F, H, W] 

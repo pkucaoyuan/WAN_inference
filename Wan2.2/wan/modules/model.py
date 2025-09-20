@@ -358,7 +358,8 @@ class WanAttentionBlock(nn.Module):
             x_frozen = x_norm[:, frozen_indices, :]
             
             # 计算冻结token的Q,K,V（用于下一步复用）
-            b, s_frozen, n, d = x_frozen.size(0), len(frozen_indices), self.num_heads, self.head_dim
+            b, s_frozen = x_frozen.size(0), len(frozen_indices)
+            n, d = self.self_attn.num_heads, self.self_attn.head_dim
             q_frozen = self.self_attn.norm_q(self.self_attn.q(x_frozen)).view(b, s_frozen, n, d)
             k_frozen = self.self_attn.norm_k(self.self_attn.k(x_frozen)).view(b, s_frozen, n, d)
             v_frozen = self.self_attn.v(x_frozen).view(b, s_frozen, n, d)
