@@ -464,9 +464,13 @@ class WanT2V:
                                 actual_token_count = F * (H // patch_size[1]) * (W // patch_size[2])
                                 
                                 if self.rank == 0:
-                                    print(f"🔍 Latent形状调试: C={C}, F={F}, H={H}, W={W}")
-                                    print(f"🔍 计算token数量: {F} * ({H}//{patch_size[1]}) * ({W}//{patch_size[2]}) = {actual_token_count}")
-                                    print(f"🔍 相对变化形状: {relative_change.shape}")
+                                    print(f"🔍 第5步Latent调试:")
+                                    print(f"   📐 Latent形状: {latents[0].shape} -> C={C}, F={F}, H={H}, W={W}")
+                                    print(f"   📐 VAE stride: (4, 8, 8), patch_size: {patch_size}")
+                                    print(f"   📐 原始输入尺寸推测: Frame={F*patch_size[0]}, H={H*8//4}, W={W*8//4}")
+                                    print(f"   🧮 Token数量计算: {F} * ({H}//{patch_size[1]}) * ({W}//{patch_size[2]}) = {actual_token_count}")
+                                    print(f"   📊 相对变化形状: {relative_change.shape}")
+                                    print(f"   📏 变化计算维度: {len(relative_change.shape)}D")
                                 
                                 # 第5步收集所有token的变化信息（与第6步逻辑完全一致）
                                 all_token_changes = []
@@ -529,8 +533,10 @@ class WanT2V:
                             actual_token_count = F * (H // patch_size[1]) * (W // patch_size[2])
                             
                             if self.rank == 0:
-                                print(f"🔍 Step {step_idx+1} Latent形状: C={C}, F={F}, H={H}, W={W}")
-                                print(f"🔍 计算token数量: {actual_token_count}, 相对变化形状: {relative_change.shape}")
+                                print(f"🔍 第{step_idx+1}步Latent调试:")
+                                print(f"   📐 Latent形状: {latents[0].shape} -> C={C}, F={F}, H={H}, W={W}")
+                                print(f"   🧮 Token数量计算: {F} * ({H}//{patch_size[1]}) * ({W}//{patch_size[2]}) = {actual_token_count}")
+                                print(f"   📊 相对变化形状: {relative_change.shape}, 维度: {len(relative_change.shape)}D")
                             
                             # 计算每个token位置的变化（与第5步逻辑完全一致）
                             token_changes = []
