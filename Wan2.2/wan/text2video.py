@@ -524,19 +524,25 @@ class WanT2V:
                                     print(f"   📊 相对变化形状: {relative_change.shape}")
                                     print(f"   📏 变化计算维度: {len(relative_change.shape)}D")
                                 
-                                # 第5步收集所有token的变化信息（修复维度匹配）
-                                all_token_changes = []
-                                # relative_change形状现在是 [F, H, W]
-                                for f in range(F):
-                                    for h in range(0, H, patch_size[1]):
-                                        for w in range(0, W, patch_size[2]):
-                                            h_end = min(h + patch_size[1], H)
-                                            w_end = min(w + patch_size[2], W)
-                                            # 计算这个patch的平均变化 - 正确的维度索引
-                                            patch_change = relative_change[f, h:h_end, w:w_end].mean()
-                                            all_token_changes.append(patch_change.item())
-                                            if not torch.isnan(patch_change) and not torch.isinf(patch_change):
-                                                token_pruner.update_change_score_statistics(patch_change.item())
+                                # 第5步高效收集所有token的变化信息（向量化操作）
+                                # relative_change形状: [F, H, W] = [1, 90, 160]
+                                # 使用unfold进行高效的patch提取
+                                patches = relative_change.unfold(1, patch_size[1], patch_size[1])  # [F, H//2, W, patch_h]
+                                patches = patches.unfold(2, patch_size[2], patch_size[2])          # [F, H//2, W//2, patch_h, patch_w]
+                                
+                                # 计算每个patch的平均值：[F, H//2, W//2]
+                                token_changes_tensor = patches.mean(dim=(-2, -1))  # 对patch_h和patch_w求平均
+                                
+                                # 展平为1D tensor：[F * H//2 * W//2] = [3600]
+                                token_changes_tensor = token_changes_tensor.view(-1)
+                                
+                                # 转换为Python列表用于统计（只转换一次）
+                                all_token_changes = token_changes_tensor.cpu().tolist()
+                                
+                                # 批量更新统计信息
+                                valid_changes = [v for v in all_token_changes if not (math.isnan(v) or math.isinf(v))]
+                                for change_val in valid_changes:
+                                    token_pruner.update_change_score_statistics(change_val)
                                 
                                 if self.rank == 0:
                                     print(f"📊 Step {step_idx+1} 收集所有token信息: {len(all_token_changes)} 个token变化值")
@@ -601,45 +607,50 @@ class WanT2V:
                                 print(f"   🧮 Token数量计算: {F} * ({H}//{patch_size[1]}) * ({W}//{patch_size[2]}) = {actual_token_count}")
                                 print(f"   📊 相对变化形状: {relative_change.shape}, 维度: {len(relative_change.shape)}D")
                             
-                            # 计算每个token位置的变化（修复维度匹配）
-                            token_changes = []
-                            # relative_change形状现在是 [F, H, W]
-                            for f in range(F):
-                                for h in range(0, H, patch_size[1]):
-                                    for w in range(0, W, patch_size[2]):
-                                        h_end = min(h + patch_size[1], H)
-                                        w_end = min(w + patch_size[2], W)
-                                        # 计算这个patch的平均变化 - 正确的维度索引
-                                        patch_change = relative_change[f, h:h_end, w:w_end].mean()
-                                        token_changes.append(patch_change)
-                            token_changes = torch.stack(token_changes)
+                            # 高效计算每个token位置的变化（向量化操作）
+                            # relative_change形状: [F, H, W] = [1, 90, 160]
+                            # 使用unfold进行高效的patch提取，避免嵌套循环
+                            
+                            # 对H和W维度进行patch分组
+                            # unfold(dimension, size, step) 
+                            patches = relative_change.unfold(1, patch_size[1], patch_size[1])  # [F, H//2, W, patch_h]
+                            patches = patches.unfold(2, patch_size[2], patch_size[2])          # [F, H//2, W//2, patch_h, patch_w]
+                            
+                            # 计算每个patch的平均值：[F, H//2, W//2]
+                            token_changes = patches.mean(dim=(-2, -1))  # 对patch_h和patch_w求平均
+                            
+                            # 展平为1D tensor：[F * H//2 * W//2] = [3600]
+                            token_changes = token_changes.view(-1)
+                            
+                            if self.rank == 0:
+                                print(f"⚡ 高效Token变化计算: {token_changes.shape} (向量化操作，避免3600次循环)")
                             
                             if self.rank == 0:
                                 print(f"✅ Step {step_idx+1} Token数量验证: 预期={actual_token_count}, 实际处理={len(token_changes)}")
                             
-                            # 基于当前步的变化分数，预测下一步的冻结token
-                            next_step_frozen_indices = []
-                            next_step_active_indices = []
+                            # 高效的token选择（GPU tensor操作，避免Python循环）
+                            threshold_tensor = torch.tensor(token_pruner.dynamic_threshold, 
+                                                          device=token_changes.device, dtype=token_changes.dtype)
                             
-                            for i, change_val in enumerate(token_changes):
-                                # 与第5步确定的动态阈值比较，决定下一步是否冻结
-                                if change_val.item() < token_pruner.dynamic_threshold:
-                                    next_step_frozen_indices.append(i)  # 下一步将被冻结
-                                else:
-                                    next_step_active_indices.append(i)  # 下一步保持激活
+                            # 使用GPU tensor比较，避免.item()调用
+                            frozen_mask = token_changes < threshold_tensor  # [3600] boolean tensor
+                            active_mask = ~frozen_mask  # 取反
+                            
+                            # 使用torch.where获取索引，避免Python循环
+                            next_step_frozen_indices = torch.where(frozen_mask)[0]  # GPU tensor
+                            next_step_active_indices = torch.where(active_mask)[0]   # GPU tensor
                             
                             # 确保下一步至少有一些token保持激活
                             if len(next_step_active_indices) == 0:
                                 # 如果所有token都低于阈值，保留变化最大的前10%
-                                sorted_indices = sorted(range(len(token_changes)), 
-                                                       key=lambda i: token_changes[i].item(), reverse=True)
+                                _, sorted_indices = torch.sort(token_changes, descending=True)  # GPU排序
                                 min_active = max(len(token_changes) // 10, 1)
                                 next_step_active_indices = sorted_indices[:min_active]
-                                next_step_frozen_indices = [i for i in range(len(token_changes)) if i not in next_step_active_indices]
+                                next_step_frozen_indices = sorted_indices[min_active:]
                             
-                            # 存储预测结果供下一步使用
-                            self._next_step_frozen_indices = torch.tensor(next_step_frozen_indices, device=latents[0].device)
-                            self._next_step_active_indices = torch.tensor(next_step_active_indices, device=latents[0].device)
+                            # 存储预测结果供下一步使用（已经是GPU tensor）
+                            self._next_step_frozen_indices = next_step_frozen_indices
+                            self._next_step_active_indices = next_step_active_indices
                             
                             if self.rank == 0:
                                 next_frozen_count = len(next_step_frozen_indices)
@@ -652,6 +663,7 @@ class WanT2V:
                                 print(f"   💾 预期节省计算: {100*next_frozen_count/total_image_tokens:.1f}%")
                                 print(f"   🎯 基于当前步变化分数预测")
                                 print(f"   📈 下一步将缓存冻结token的hidden state")
+                                print(f"   ⚡ GPU tensor操作: 避免3600次.item()调用")
                         
                         # 保存当前latents
                         self._prev_latents = latents[0].clone()
