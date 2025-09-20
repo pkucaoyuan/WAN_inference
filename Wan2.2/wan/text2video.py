@@ -468,30 +468,28 @@ class WanT2V:
                                     print(f"🔍 计算token数量: {F} * ({H}//{patch_size[1]}) * ({W}//{patch_size[2]}) = {actual_token_count}")
                                     print(f"🔍 相对变化形状: {relative_change.shape}")
                                 
-                                # 第5步收集所有token的变化信息（与第6步逻辑保持一致）
+                                # 第5步收集所有token的变化信息（与第6步逻辑完全一致）
                                 all_token_changes = []
-                                if len(relative_change.shape) == 3:  # [C, H, W]
-                                    # 按patch_size分组计算平均变化
-                                    for f in range(F):
-                                        for h in range(0, H, patch_size[1]):
-                                            for w in range(0, W, patch_size[2]):
-                                                h_end = min(h + patch_size[1], H)
-                                                w_end = min(w + patch_size[2], W)
-                                                # 计算这个patch的平均变化
+                                # 按patch_size分组计算平均变化 (与第6步完全相同的逻辑)
+                                for f in range(F):
+                                    for h in range(0, H, patch_size[1]):
+                                        for w in range(0, W, patch_size[2]):
+                                            h_end = min(h + patch_size[1], H)
+                                            w_end = min(w + patch_size[2], W)
+                                            # 计算这个patch的平均变化
+                                            if len(relative_change.shape) == 3:  # [C, H, W]
                                                 patch_change = relative_change[:, h:h_end, w:w_end].mean()
-                                                all_token_changes.append(patch_change.item())
-                                                if not torch.isnan(patch_change) and not torch.isinf(patch_change):
-                                                    token_pruner.update_change_score_statistics(patch_change.item())
-                                else:
-                                    # 如果维度不匹配，使用flatten后的前N个值
-                                    token_changes_flat = relative_change.flatten()[:actual_token_count]
-                                    for change_val in token_changes_flat:
-                                        all_token_changes.append(change_val.item())
-                                        if not torch.isnan(change_val) and not torch.isinf(change_val):
-                                            token_pruner.update_change_score_statistics(change_val.item())
+                                            else:  # [H, W]
+                                                patch_change = relative_change[h:h_end, w:w_end].mean()
+                                            all_token_changes.append(patch_change.item())
+                                            if not torch.isnan(patch_change) and not torch.isinf(patch_change):
+                                                token_pruner.update_change_score_statistics(patch_change.item())
                                 
                                 if self.rank == 0:
                                     print(f"📊 Step {step_idx+1} 收集所有token信息: {len(all_token_changes)} 个token变化值")
+                                    print(f"✅ Token数量验证: 预期={actual_token_count}, 实际收集={len(all_token_changes)}")
+                                    if len(all_token_changes) != actual_token_count:
+                                        print(f"⚠️ Token数量不匹配！需要检查收集逻辑")
                                 
                                 # 基于第5步的所有token变化计算动态阈值
                                 if len(all_token_changes) > 0:
@@ -534,23 +532,24 @@ class WanT2V:
                                 print(f"🔍 Step {step_idx+1} Latent形状: C={C}, F={F}, H={H}, W={W}")
                                 print(f"🔍 计算token数量: {actual_token_count}, 相对变化形状: {relative_change.shape}")
                             
-                            # 计算每个token位置的变化（基于空间位置）
-                            # 将latent变化映射到token级别
-                            if len(relative_change.shape) == 3:  # [C, H, W]
-                                # 按patch_size分组计算平均变化
-                                token_changes = []
-                                for f in range(F):
-                                    for h in range(0, H, patch_size[1]):
-                                        for w in range(0, W, patch_size[2]):
-                                            h_end = min(h + patch_size[1], H)
-                                            w_end = min(w + patch_size[2], W)
-                                            # 计算这个patch的平均变化
+                            # 计算每个token位置的变化（与第5步逻辑完全一致）
+                            token_changes = []
+                            # 按patch_size分组计算平均变化 (与第5步完全相同的逻辑)
+                            for f in range(F):
+                                for h in range(0, H, patch_size[1]):
+                                    for w in range(0, W, patch_size[2]):
+                                        h_end = min(h + patch_size[1], H)
+                                        w_end = min(w + patch_size[2], W)
+                                        # 计算这个patch的平均变化
+                                        if len(relative_change.shape) == 3:  # [C, H, W]
                                             patch_change = relative_change[:, h:h_end, w:w_end].mean()
-                                            token_changes.append(patch_change)
-                                token_changes = torch.stack(token_changes)
-                            else:
-                                # 如果维度不匹配，使用flatten后的前N个值
-                                token_changes = relative_change.flatten()[:actual_token_count]
+                                        else:  # [H, W]
+                                            patch_change = relative_change[h:h_end, w:w_end].mean()
+                                        token_changes.append(patch_change)
+                            token_changes = torch.stack(token_changes)
+                            
+                            if self.rank == 0:
+                                print(f"✅ Step {step_idx+1} Token数量验证: 预期={actual_token_count}, 实际处理={len(token_changes)}")
                             
                             # 基于真实变化幅度与第5步阈值比较进行裁剪
                             active_token_indices = []
