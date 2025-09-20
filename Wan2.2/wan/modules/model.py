@@ -279,10 +279,9 @@ class WanAttentionBlock(nn.Module):
             active_indices = torch.where(active_mask)[0]
             
             if len(active_indices) < x.size(1):  # 确实有token被裁剪
-                # 调试信息：确认裁剪生效
-                if hasattr(self, '_debug_printed') is False:
-                    # 移除重复的Transformer层输出，减少终端噪音
-                    self._debug_printed = True
+                # 精确计时：分析每个环节的性能
+                import time
+                layer_start = time.time()
                 # 只对激活token进行计算
                 x_active = x[:, active_indices, :]
                 # e是tuple，需要分别处理每个元素
@@ -337,11 +336,15 @@ class WanAttentionBlock(nn.Module):
                     if len(frozen_indices) > 0:
                         full_active_mask[frozen_indices] = False
                     
+                    attn_start = time.time()
                     y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs, 
                                            active_mask=full_active_mask, cached_qkv=cached_qkv_data)
+                    attn_time = time.time() - attn_start
                 
                 # 缓存当前的Q,K,V用于下一步（基于预测的冻结token）
+                cache_start = time.time()
                 self._cache_frozen_qkv(x_norm, frozen_indices, seq_lens, grid_sizes, freqs)
+                cache_time = time.time() - cache_start
                 
                 # Algorithm 1: Line 3-5: 只有选中token使用attention结果更新
                 y = torch.zeros_like(x)
@@ -379,7 +382,12 @@ class WanAttentionBlock(nn.Module):
                     # Algorithm 1: Line 7: 未选中token保持上一步状态（已经在x中）
                     return x
                 
+                ffn_start = time.time()
                 x = cross_attn_ffn_pruned(x, context, context_lens, e, active_indices)
+                ffn_time = time.time() - ffn_start
+                
+                layer_total_time = time.time() - layer_start
+                print(f"   📊 层计时: Attention={attn_time:.3f}s, Cache={cache_time:.3f}s, FFN={ffn_time:.3f}s, Total={layer_total_time:.3f}s")
             else:
                 # 没有token被裁剪，正常计算
                 y = self.self_attn(
