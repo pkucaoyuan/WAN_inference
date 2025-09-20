@@ -227,6 +227,7 @@ class WanAttentionBlock(nn.Module):
         freqs,
         context,
         context_lens,
+        active_mask=None,
     ):
         r"""
         Args:
@@ -241,23 +242,82 @@ class WanAttentionBlock(nn.Module):
             e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
         assert e[0].dtype == torch.float32
 
-        # self-attention
-        y = self.self_attn(
-            self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
-            seq_lens, grid_sizes, freqs)
-        with torch.amp.autocast('cuda', dtype=torch.float32):
-            x = x + y * e[2].squeeze(2)
+        # Token裁剪优化：只计算激活token
+        if active_mask is not None and self.enable_token_pruning:
+            # 获取激活token的索引
+            active_indices = torch.where(active_mask)[0]
+            
+            if len(active_indices) < x.size(1):  # 确实有token被裁剪
+                # 只对激活token进行计算
+                x_active = x[:, active_indices, :]
+                e_active = e[:, active_indices, :, :] if e.size(1) == x.size(1) else e
+                
+                # Self-attention只在激活token上计算
+                y_active = self.self_attn(
+                    self.norm1(x_active).float() * (1 + e_active[1].squeeze(2)) + e_active[0].squeeze(2),
+                    seq_lens, grid_sizes, freqs)
+                
+                # 将结果映射回原始位置，保持冻结token不变
+                y = torch.zeros_like(x)
+                y[:, active_indices, :] = y_active
+                
+                with torch.amp.autocast('cuda', dtype=torch.float32):
+                    x = x + y * e[2].squeeze(2)
+                
+                # Cross-attention & FFN也只在激活token上计算
+                def cross_attn_ffn_pruned(x, context, context_lens, e, active_indices):
+                    x_active = x[:, active_indices, :]
+                    
+                    # Cross-attention
+                    cross_out = self.cross_attn(self.norm3(x_active), context, context_lens)
+                    x_active = x_active + cross_out
+                    
+                    # FFN
+                    ffn_input = self.norm2(x_active).float() * (1 + e[4][:, active_indices].squeeze(2)) + e[3][:, active_indices].squeeze(2)
+                    ffn_out = self.ffn(ffn_input)
+                    
+                    with torch.amp.autocast('cuda', dtype=torch.float32):
+                        x_active = x_active + ffn_out * e[5][:, active_indices].squeeze(2)
+                    
+                    # 映射回原始位置
+                    x[:, active_indices, :] = x_active
+                    return x
+                
+                x = cross_attn_ffn_pruned(x, context, context_lens, e, active_indices)
+            else:
+                # 没有token被裁剪，正常计算
+                y = self.self_attn(
+                    self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
+                    seq_lens, grid_sizes, freqs)
+                with torch.amp.autocast('cuda', dtype=torch.float32):
+                    x = x + y * e[2].squeeze(2)
 
-        # cross-attention & ffn function
-        def cross_attn_ffn(x, context, context_lens, e):
-            x = x + self.cross_attn(self.norm3(x), context, context_lens)
-            y = self.ffn(
-                self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
+                def cross_attn_ffn(x, context, context_lens, e):
+                    x = x + self.cross_attn(self.norm3(x), context, context_lens)
+                    y = self.ffn(
+                        self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
+                    with torch.amp.autocast('cuda', dtype=torch.float32):
+                        x = x + y * e[5].squeeze(2)
+                    return x
+
+                x = cross_attn_ffn(x, context, context_lens, e)
+        else:
+            # 标准计算路径（无裁剪）
+            y = self.self_attn(
+                self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
+                seq_lens, grid_sizes, freqs)
             with torch.amp.autocast('cuda', dtype=torch.float32):
-                x = x + y * e[5].squeeze(2)
-            return x
+                x = x + y * e[2].squeeze(2)
 
-        x = cross_attn_ffn(x, context, context_lens, e)
+            def cross_attn_ffn(x, context, context_lens, e):
+                x = x + self.cross_attn(self.norm3(x), context, context_lens)
+                y = self.ffn(
+                    self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
+                with torch.amp.autocast('cuda', dtype=torch.float32):
+                    x = x + y * e[5].squeeze(2)
+                return x
+
+            x = cross_attn_ffn(x, context, context_lens, e)
         return x
 
 
@@ -390,7 +450,7 @@ class WanModel(ModelMixin, ConfigMixin):
         # blocks
         self.blocks = nn.ModuleList([
             WanAttentionBlock(dim, ffn_dim, num_heads, window_size, qk_norm,
-                              cross_attn_norm, eps) for _ in range(num_layers)
+                              cross_attn_norm, eps, enable_token_pruning=True) for _ in range(num_layers)
         ])
 
         # head
@@ -416,6 +476,7 @@ class WanModel(ModelMixin, ConfigMixin):
         context,
         seq_len,
         y=None,
+        active_mask=None,
     ):
         r"""
         Forward pass through the diffusion model
@@ -486,7 +547,8 @@ class WanModel(ModelMixin, ConfigMixin):
             grid_sizes=grid_sizes,
             freqs=self.freqs,
             context=context,
-            context_lens=context_lens)
+            context_lens=context_lens,
+            active_mask=active_mask)
 
         for block in self.blocks:
             x = block(x, **kwargs)
