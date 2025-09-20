@@ -282,6 +282,7 @@ class WanAttentionBlock(nn.Module):
                 # 精确计时：分析每个环节的性能
                 import time
                 layer_start = time.time()
+                attn_time = cache_time = ffn_time = 0.0  # 初始化所有计时变量
                 # 只对激活token进行计算
                 x_active = x[:, active_indices, :]
                 # e是tuple，需要分别处理每个元素
@@ -323,8 +324,10 @@ class WanAttentionBlock(nn.Module):
                 
                 if cache_valid:
                     # 使用QKV缓存的混合attention计算
+                    attn_start = time.time()
                     y_mixed = self._compute_mixed_attention(x_norm, active_indices, frozen_indices, 
                                                           seq_lens, grid_sizes, freqs)
+                    attn_time = time.time() - attn_start
                     # 简化QKV缓存输出
                     pass  # QKV缓存命中，无需输出
                 else:
