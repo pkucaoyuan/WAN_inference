@@ -123,24 +123,52 @@ class WanSelfAttention(nn.Module):
         self.norm_q = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
         self.norm_k = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
 
-    def forward(self, x, seq_lens, grid_sizes, freqs):
+    def forward(self, x, seq_lens, grid_sizes, freqs, active_mask=None, cached_qkv=None):
         r"""
         Args:
             x(Tensor): Shape [B, L, num_heads, C / num_heads]
             seq_lens(Tensor): Shape [B]
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
+            active_mask(Tensor): Shape [L], True for active tokens
+            cached_qkv(dict): Cached Q,K,V for frozen tokens
         """
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
 
-        # query, key, value function
-        def qkv_fn(x):
+        # CAT算法：冻结token复用QKV，激活token计算新QKV
+        if active_mask is not None and cached_qkv is not None:
+            # 使用缓存的QKV + 新计算的激活token QKV
+            active_indices = torch.where(active_mask)[0]
+            frozen_indices = torch.where(~active_mask)[0]
+            
+            # 只对激活token计算新的Q,K,V
+            x_active = x[:, active_indices, :]
+            q_active = self.norm_q(self.q(x_active)).view(b, len(active_indices), n, d)
+            k_active = self.norm_k(self.k(x_active)).view(b, len(active_indices), n, d)
+            v_active = self.v(x_active).view(b, len(active_indices), n, d)
+            
+            # 构建完整的Q,K,V矩阵
+            q = torch.zeros(b, s, n, d, device=x.device, dtype=q_active.dtype)
+            k = torch.zeros(b, s, n, d, device=x.device, dtype=k_active.dtype)
+            v = torch.zeros(b, s, n, d, device=x.device, dtype=v_active.dtype)
+            
+            # 填入激活token的新QKV
+            q[:, active_indices, :, :] = q_active
+            k[:, active_indices, :, :] = k_active
+            v[:, active_indices, :, :] = v_active
+            
+            # 填入冻结token的缓存QKV
+            if len(frozen_indices) > 0:
+                q[:, frozen_indices, :, :] = cached_qkv['q_frozen']
+                k[:, frozen_indices, :, :] = cached_qkv['k_frozen']
+                v[:, frozen_indices, :, :] = cached_qkv['v_frozen']
+            
+            print(f"   ⚡ QKV投影节省: 只计算{len(active_indices)}/{s}个token的QKV")
+        else:
+            # 标准计算：所有token计算QKV
             q = self.norm_q(self.q(x)).view(b, s, n, d)
             k = self.norm_k(self.k(x)).view(b, s, n, d)
             v = self.v(x).view(b, s, n, d)
-            return q, k, v
-
-        q, k, v = qkv_fn(x)
 
         x = flash_attention(
             q=rope_apply(q, grid_sizes, freqs),
@@ -301,9 +329,16 @@ class WanAttentionBlock(nn.Module):
                     # 简化QKV缓存输出
                     pass  # QKV缓存命中，无需输出
                 else:
-                    # ✅ 正确的CAT算法：所有token参与attention，只更新激活token
-                    y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)  # 所有token参与
-                    # Self-Attention不能节省计算，因为激活token需要attend到冻结token
+                    # CAT算法：传递active_mask和cached_qkv实现真正的QKV复用
+                    cached_qkv_data = self._frozen_qkv_cache if hasattr(self, '_frozen_qkv_cache') and self._frozen_qkv_cache else None
+                    
+                    # 创建完整的active_mask
+                    full_active_mask = torch.ones(x.size(1), dtype=torch.bool, device=x.device)
+                    if len(frozen_indices) > 0:
+                        full_active_mask[frozen_indices] = False
+                    
+                    y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs, 
+                                           active_mask=full_active_mask, cached_qkv=cached_qkv_data)
                 
                 # 缓存当前的Q,K,V用于下一步（基于预测的冻结token）
                 self._cache_frozen_qkv(x_norm, frozen_indices, seq_lens, grid_sizes, freqs)
