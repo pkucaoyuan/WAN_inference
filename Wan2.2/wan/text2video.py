@@ -451,72 +451,102 @@ class WanT2V:
                                 change_magnitude = torch.norm(latents[0] - prev_latents, dim=-1)
                                 relative_change = change_magnitude / (torch.norm(prev_latents, dim=-1) + 1e-8)
                                 
-                                # 更新变化分数统计
-                                for i, change_val in enumerate(relative_change.flatten()[:900]):  # 假设前900是图像token
-                                    token_pruner.update_change_score_statistics(change_val.item())
+                                # 更新变化分数统计（基于真实token数量）
+                                C, F, H, W = latents[0].shape
+                                patch_size = (1, 2, 2)
+                                actual_token_count = F * (H // patch_size[1]) * (W // patch_size[2])
+                                
+                                # 计算真实的token级别变化
+                                for f in range(F):
+                                    for h in range(0, H, patch_size[1]):
+                                        for w in range(0, W, patch_size[2]):
+                                            h_end = min(h + patch_size[1], H)
+                                            w_end = min(w + patch_size[2], W)
+                                            # 计算这个patch的真实变化
+                                            patch_change = relative_change[:, h:h_end, w:w_end].mean()
+                                            token_pruner.update_change_score_statistics(patch_change.item())
                         
                         # 保存当前latents用于下一步比较
                         self._prev_latents = latents[0].clone()
                         
                         # 基准期结束时计算动态阈值
                         if step_idx + 1 == token_pruner.baseline_steps:
-                            # 生成基准分数（简化版，基于变化统计）
-                            import numpy as np
+                            # 基于真实变化统计计算动态阈值
                             stats = token_pruner.change_score_stats
-                            if stats['count'] > 0:
-                                avg_change = stats['sum'] / stats['count']
-                                # 基于统计生成分数分布
-                                baseline_scores = []
-                                for i in range(900):
-                                    # 模拟综合评分：变化 + 随机的attention权重
-                                    change_component = avg_change * (0.8 + 0.4 * np.random.random())
-                                    attn_component = 0.1 + 0.2 * np.random.random()
-                                    composite = 0.4 * change_component + 0.6 * attn_component
-                                    baseline_scores.append(composite)
-                                
-                                token_pruner.baseline_scores = baseline_scores
+                            if stats['count'] > 0 and len(stats['values']) > 0:
+                                # 直接使用真实的变化分数作为基准
+                                import numpy as np
+                                token_pruner.baseline_scores = stats['values'].copy()
                                 token_pruner.dynamic_threshold = token_pruner.calculate_dynamic_threshold()
                                 
                                 if self.rank == 0:
                                     print(f"🎯 动态阈值已确定: {token_pruner.dynamic_threshold:.4f} (第{token_pruner.percentile_threshold}百分位数)")
+                                    print(f"   📊 基于{stats['count']}个真实token变化值计算")
                     
-                    # 应用token裁剪
+                    # 应用token裁剪（基于真实latent变化）
                     elif token_pruner.should_apply_pruning(step_idx + 1, expert_name):
-                        # 计算当前步骤的token重要性（简化版）
                         prev_latents = getattr(self, '_prev_latents', None)
-                        if prev_latents is not None:
-                            # 基于变化幅度和动态阈值确定active_mask
+                        if prev_latents is not None and token_pruner.dynamic_threshold is not None:
+                            # 计算真实的token变化幅度
                             change_magnitude = torch.norm(latents[0] - prev_latents, dim=-1)
                             relative_change = change_magnitude / (torch.norm(prev_latents, dim=-1) + 1e-8)
                             
-                            # 简化的综合评分（基于变化幅度）
-                            import numpy as np
-                            composite_scores = []
-                            for i, change_val in enumerate(relative_change.flatten()[:900]):
-                                # 添加一些随机的attention权重模拟
-                                attn_boost = 0.1 + 0.2 * np.random.random()
-                                composite_score = 0.7 * change_val.item() + 0.3 * attn_boost
-                                composite_scores.append(composite_score)
+                            # 获取实际的token序列长度
+                            # latents[0]形状: [C, F, H, W] 
+                            # patch_size = (1, 2, 2) -> token数量 = F * (H//2) * (W//2)
+                            C, F, H, W = latents[0].shape
+                            patch_size = (1, 2, 2)  # 从模型配置获取
+                            actual_token_count = F * (H // patch_size[1]) * (W // patch_size[2])
                             
-                            # 创建active_mask：评分高于动态阈值的token保持激活
-                            active_token_indices = [i for i, score in enumerate(composite_scores) 
-                                                  if score >= token_pruner.dynamic_threshold]
+                            # 计算每个token位置的变化（基于空间位置）
+                            # 将latent变化映射到token级别
+                            if len(relative_change.shape) == 3:  # [C, H, W]
+                                # 按patch_size分组计算平均变化
+                                token_changes = []
+                                for f in range(F):
+                                    for h in range(0, H, patch_size[1]):
+                                        for w in range(0, W, patch_size[2]):
+                                            h_end = min(h + patch_size[1], H)
+                                            w_end = min(w + patch_size[2], W)
+                                            # 计算这个patch的平均变化
+                                            patch_change = relative_change[:, h:h_end, w:w_end].mean()
+                                            token_changes.append(patch_change)
+                                token_changes = torch.stack(token_changes)
+                            else:
+                                # 如果维度不匹配，使用flatten后的前N个值
+                                token_changes = relative_change.flatten()[:actual_token_count]
                             
-                            # 创建完整的active_mask
-                            total_seq_len = latents[0].size(0)  # 获取实际序列长度
-                            current_active_mask = torch.ones(total_seq_len, dtype=torch.bool, device=latents[0].device)
+                            # 基于真实变化幅度创建active_mask
+                            active_token_indices = []
+                            for i, change_val in enumerate(token_changes):
+                                # 使用真实的变化值与动态阈值比较
+                                if change_val.item() >= token_pruner.dynamic_threshold:
+                                    active_token_indices.append(i)
                             
-                            # 只对图像token应用裁剪（假设前900个是图像token）
-                            image_token_count = min(900, total_seq_len)
-                            inactive_indices = [i for i in range(image_token_count) if i not in active_token_indices]
+                            # 确保至少保留30%的token
+                            min_active_tokens = max(len(token_changes) // 3, 1)
+                            if len(active_token_indices) < min_active_tokens:
+                                # 按变化幅度排序，保留top-k
+                                sorted_indices = sorted(range(len(token_changes)), 
+                                                       key=lambda i: token_changes[i].item(), reverse=True)
+                                active_token_indices = sorted_indices[:min_active_tokens]
+                            
+                            # 创建完整的active_mask（用于模型计算）
+                            # 使用模型的实际seq_len参数
+                            model_seq_len = seq_len  # 模型forward中的seq_len参数
+                            current_active_mask = torch.ones(model_seq_len, dtype=torch.bool, device=latents[0].device)
+                            
+                            # 设置非激活token
+                            inactive_indices = [i for i in range(len(token_changes)) if i not in active_token_indices]
                             if inactive_indices:
                                 current_active_mask[inactive_indices] = False
                                 
                                 if self.rank == 0:
                                     active_count = len(active_token_indices)
-                                    total_image_tokens = image_token_count
-                                    print(f"🔥 Step {step_idx+1} Token裁剪: {active_count}/{total_image_tokens} "
-                                          f"({100*active_count/total_image_tokens:.1f}%) 激活")
+                                    total_tokens = len(token_changes)
+                                    print(f"🔥 Step {step_idx+1} 真实Token裁剪: {active_count}/{total_tokens} "
+                                          f"({100*active_count/total_tokens:.1f}%) 激活")
+                                    print(f"   💾 实际节省计算: {100*(total_tokens-active_count)/total_tokens:.1f}%")
                         
                         # 保存当前latents
                         self._prev_latents = latents[0].clone()
