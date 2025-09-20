@@ -271,17 +271,9 @@ class WanAttentionBlock(nn.Module):
                 # 计算激活token的归一化输入
                 x_norm = self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
                 
-                # 检查是否有缓存的冻结token QKV
-                if hasattr(self, '_frozen_qkv_cache') and self._frozen_qkv_cache and len(frozen_indices) > 0:
-                    # 混合计算：新的激活token Q + 缓存的冻结token K,V
-                    y_mixed = self._compute_mixed_attention(x_norm, active_indices, frozen_indices, 
-                                                          seq_lens, grid_sizes, freqs)
-                else:
-                    # 首次或无冻结token，完整计算
-                    y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
-                
-                # 缓存当前的Q,K,V用于下一步
-                self._cache_frozen_qkv(x_norm, frozen_indices, seq_lens, grid_sizes, freqs)
+                # 暂时禁用QKV缓存，因为冻结token集合每步都在变化
+                # TODO: 未来可以实现更智能的缓存策略
+                y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
                 
                 # Algorithm 1: Line 3-5: 只有选中token使用attention结果更新
                 y = torch.zeros_like(x)

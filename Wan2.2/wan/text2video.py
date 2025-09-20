@@ -628,9 +628,9 @@ class WanT2V:
                                     
                                     print(f"   ⚡ FFN计算节省: {100*ffn_savings:.1f}%")
                                     print(f"   ⚡ Hidden State更新节省: {100*update_savings:.1f}%") 
-                                    print(f"   🔄 QKV计算节省: {100*qkv_computation_savings:.1f}%的token复用上一步QKV")
-                                    print(f"   📝 Attention矩阵: 混合计算（新Q,K,V + 缓存Q,K,V）")
-                                    print(f"   🧊 冻结Token: 复用hidden state + 复用QKV，跳过投影计算")
+                                    print(f"   📝 Self-Attention: 完整计算（所有token参与）")
+                                    print(f"   📝 Cross-Attention: 完整计算（所有token参与）")
+                                    print(f"   🧊 冻结Token: 跳过FFN计算，保持hidden state不变")
                         
                         # 保存当前latents
                         self._prev_latents = latents[0].clone()
