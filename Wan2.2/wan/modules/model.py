@@ -254,14 +254,16 @@ class WanAttentionBlock(nn.Module):
                     self._debug_printed = True
                 # 只对激活token进行计算
                 x_active = x[:, active_indices, :]
-                e_active = e[:, active_indices, :, :] if e.size(1) == x.size(1) else e
+                # e是tuple，需要分别处理每个元素
+                e_active = tuple(e_elem[:, active_indices, :] if e_elem.size(1) == x.size(1) else e_elem 
+                               for e_elem in e)
                 
-                # Self-attention只在激活token上计算
-                y_active = self.self_attn(
-                    self.norm1(x_active).float() * (1 + e_active[1].squeeze(2)) + e_active[0].squeeze(2),
-                    seq_lens, grid_sizes, freqs)
+                # Self-attention：只在激活token之间计算（最大节省）
+                # 冻结token完全不参与任何attention计算
+                x_active_norm = self.norm1(x_active).float() * (1 + e_active[1].squeeze(2)) + e_active[0].squeeze(2)
+                y_active = self.self_attn(x_active_norm, seq_lens, grid_sizes, freqs)
                 
-                # 将结果映射回原始位置，保持冻结token不变
+                # 将结果映射回原始位置，冻结token完全不参与
                 y = torch.zeros_like(x)
                 y[:, active_indices, :] = y_active
                 
@@ -271,24 +273,27 @@ class WanAttentionBlock(nn.Module):
                     x[:, active_indices, :] = x_new[:, active_indices, :]
                     # 冻结token保持x[:, frozen_indices, :]不变
                 
-                # Cross-attention & FFN也只在激活token上计算
+                # Cross-attention & FFN：只在激活token上计算（真正节省计算）
                 def cross_attn_ffn_pruned(x, context, context_lens, e, active_indices):
+                    # 只处理激活token，真正节省计算
                     x_active = x[:, active_indices, :]
                     
-                    # Cross-attention
+                    # Cross-attention：只计算激活token与文本的attention
                     cross_out = self.cross_attn(self.norm3(x_active), context, context_lens)
                     x_active = x_active + cross_out
                     
-                    # FFN
-                    ffn_input = self.norm2(x_active).float() * (1 + e[4][:, active_indices].squeeze(2)) + e[3][:, active_indices].squeeze(2)
-                    ffn_out = self.ffn(ffn_input)
+                    # FFN：只在激活token上计算（真正的计算节省）
+                    e_ffn_active = tuple(e_elem[:, active_indices, :] if e_elem.size(1) == x.size(1) else e_elem 
+                                       for e_elem in e)
+                    ffn_input = self.norm2(x_active).float() * (1 + e_ffn_active[4].squeeze(2)) + e_ffn_active[3].squeeze(2)
+                    ffn_out = self.ffn(ffn_input)  # 🔥 真正减少FFN计算量
                     
                     with torch.amp.autocast('cuda', dtype=torch.float32):
-                        x_active = x_active + ffn_out * e[5][:, active_indices].squeeze(2)
+                        x_active = x_active + ffn_out * e_ffn_active[5].squeeze(2)
                     
                     # 映射回原始位置，只更新激活token
                     x[:, active_indices, :] = x_active
-                    # 冻结token保持原值不变
+                    # 冻结token完全保持原值不变
                     return x
                 
                 x = cross_attn_ffn_pruned(x, context, context_lens, e, active_indices)

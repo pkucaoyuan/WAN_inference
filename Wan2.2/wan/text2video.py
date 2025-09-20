@@ -464,7 +464,11 @@ class WanT2V:
                                             w_end = min(w + patch_size[2], W)
                                             # 计算这个patch的真实变化
                                             patch_change = relative_change[:, h:h_end, w:w_end].mean()
-                                            token_pruner.update_change_score_statistics(patch_change.item())
+                                            if not torch.isnan(patch_change) and not torch.isinf(patch_change):
+                                                token_pruner.update_change_score_statistics(patch_change.item())
+                                
+                                if self.rank == 0:
+                                    print(f"📊 Step {step_idx+1} 收集变化统计: {token_pruner.change_score_stats['count']} 个token变化值")
                         
                         # 保存当前latents用于下一步比较
                         self._prev_latents = latents[0].clone()
@@ -474,14 +478,22 @@ class WanT2V:
                             # 基于真实变化统计计算动态阈值
                             stats = token_pruner.change_score_stats
                             if stats['count'] > 0 and len(stats['values']) > 0:
-                                # 直接使用真实的变化分数作为基准
+                                # 过滤掉无效值
                                 import numpy as np
-                                token_pruner.baseline_scores = stats['values'].copy()
-                                token_pruner.dynamic_threshold = token_pruner.calculate_dynamic_threshold()
+                                valid_values = [v for v in stats['values'] if not (np.isnan(v) or np.isinf(v))]
                                 
-                                if self.rank == 0:
-                                    print(f"🎯 动态阈值已确定: {token_pruner.dynamic_threshold:.4f} (第{token_pruner.percentile_threshold}百分位数)")
-                                    print(f"   📊 基于{stats['count']}个真实token变化值计算")
+                                if len(valid_values) > 0:
+                                    token_pruner.baseline_scores = valid_values
+                                    token_pruner.dynamic_threshold = token_pruner.calculate_dynamic_threshold()
+                                    
+                                    if self.rank == 0:
+                                        print(f"🎯 动态阈值已确定: {token_pruner.dynamic_threshold:.4f} (第{token_pruner.percentile_threshold}百分位数)")
+                                        print(f"   📊 基于{len(valid_values)}个有效token变化值计算")
+                                        print(f"   📈 变化范围: {min(valid_values):.4f} - {max(valid_values):.4f}")
+                                else:
+                                    if self.rank == 0:
+                                        print(f"⚠️ 基准期未收集到有效的变化值，使用默认阈值")
+                                    token_pruner.dynamic_threshold = 0.01  # 默认阈值
                     
                     # 应用token裁剪（基于真实latent变化）
                     elif token_pruner.should_apply_pruning(step_idx + 1, expert_name):
@@ -558,11 +570,14 @@ class WanT2V:
                                     print(f"   💾 实际节省计算: {100*frozen_count/total_image_tokens:.1f}%")
                                     print(f"   🎯 动态阈值: {token_pruner.dynamic_threshold:.4f}")
                                     
-                                    # 计算实际的FLOPs节省
-                                    attention_savings = 1 - (active_count / total_image_tokens) ** 2  # O(N²) -> O(k²)
-                                    ffn_savings = 1 - (active_count / total_image_tokens)             # O(N) -> O(k)
-                                    print(f"   ⚡ Attention计算节省: {100*attention_savings:.1f}%")
+                                    # 计算实际的节省（最大节省版本）
+                                    attention_savings = 1 - (active_count / total_image_tokens) ** 2  # Self-attention: O(N²) -> O(k²)
+                                    cross_attn_savings = 1 - (active_count / total_image_tokens)      # Cross-attention: O(N) -> O(k)
+                                    ffn_savings = 1 - (active_count / total_image_tokens)             # FFN: O(N) -> O(k)
+                                    print(f"   ⚡ Self-Attention计算节省: {100*attention_savings:.1f}%")
+                                    print(f"   ⚡ Cross-Attention计算节省: {100*cross_attn_savings:.1f}%")
                                     print(f"   ⚡ FFN计算节省: {100*ffn_savings:.1f}%")
+                                    print(f"   🧊 冻结Token: 完全不参与任何计算，保持上一步状态")
                         
                         # 保存当前latents
                         self._prev_latents = latents[0].clone()
