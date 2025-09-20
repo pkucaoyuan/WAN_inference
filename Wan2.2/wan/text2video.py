@@ -536,17 +536,33 @@ class WanT2V:
                             model_seq_len = seq_len  # 模型forward中的seq_len参数
                             current_active_mask = torch.ones(model_seq_len, dtype=torch.bool, device=latents[0].device)
                             
-                            # 设置非激活token
-                            inactive_indices = [i for i in range(len(token_changes)) if i not in active_token_indices]
+                            # 设置非激活token（只针对实际的图像token范围）
+                            image_token_end = min(len(token_changes), model_seq_len)
+                            inactive_indices = [i for i in range(image_token_end) if i not in active_token_indices]
+                            
                             if inactive_indices:
                                 current_active_mask[inactive_indices] = False
                                 
+                                # 更新token_pruner的冻结列表（用于日志）
+                                for idx in inactive_indices:
+                                    token_pruner.frozen_tokens.add(idx)
+                                
                                 if self.rank == 0:
                                     active_count = len(active_token_indices)
-                                    total_tokens = len(token_changes)
-                                    print(f"🔥 Step {step_idx+1} 真实Token裁剪: {active_count}/{total_tokens} "
-                                          f"({100*active_count/total_tokens:.1f}%) 激活")
-                                    print(f"   💾 实际节省计算: {100*(total_tokens-active_count)/total_tokens:.1f}%")
+                                    total_image_tokens = image_token_end
+                                    frozen_count = len(inactive_indices)
+                                    
+                                    print(f"🔥 Step {step_idx+1} 真实Token裁剪:")
+                                    print(f"   📊 激活Token: {active_count}/{total_image_tokens} ({100*active_count/total_image_tokens:.1f}%)")
+                                    print(f"   🧊 冻结Token: {frozen_count} 个")
+                                    print(f"   💾 实际节省计算: {100*frozen_count/total_image_tokens:.1f}%")
+                                    print(f"   🎯 动态阈值: {token_pruner.dynamic_threshold:.4f}")
+                                    
+                                    # 计算实际的FLOPs节省
+                                    attention_savings = 1 - (active_count / total_image_tokens) ** 2  # O(N²) -> O(k²)
+                                    ffn_savings = 1 - (active_count / total_image_tokens)             # O(N) -> O(k)
+                                    print(f"   ⚡ Attention计算节省: {100*attention_savings:.1f}%")
+                                    print(f"   ⚡ FFN计算节省: {100*ffn_savings:.1f}%")
                         
                         # 保存当前latents
                         self._prev_latents = latents[0].clone()
@@ -554,6 +570,12 @@ class WanT2V:
                 # 准备模型调用参数（包含active_mask）
                 model_kwargs_c = {**arg_c, 'active_mask': current_active_mask}
                 model_kwargs_null = {**arg_null, 'active_mask': current_active_mask}
+                
+                # 验证active_mask确实被使用（调试信息）
+                if current_active_mask is not None and self.rank == 0:
+                    active_ratio = current_active_mask.sum().item() / current_active_mask.size(0)
+                    print(f"   🔍 Active_mask验证: {current_active_mask.sum().item()}/{current_active_mask.size(0)} "
+                          f"({100*active_ratio:.1f}%) 将传递给模型")
 
                 if is_final_steps or is_high_noise_final:
                     # CFG截断：只进行无条件预测（真正节省50%计算）

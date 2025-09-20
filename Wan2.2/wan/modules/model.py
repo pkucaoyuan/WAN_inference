@@ -248,6 +248,10 @@ class WanAttentionBlock(nn.Module):
             active_indices = torch.where(active_mask)[0]
             
             if len(active_indices) < x.size(1):  # 确实有token被裁剪
+                # 调试信息：确认裁剪生效
+                if hasattr(self, '_debug_printed') is False:
+                    print(f"🔥 Transformer层Token裁剪生效: {len(active_indices)}/{x.size(1)} token激活")
+                    self._debug_printed = True
                 # 只对激活token进行计算
                 x_active = x[:, active_indices, :]
                 e_active = e[:, active_indices, :, :] if e.size(1) == x.size(1) else e
@@ -262,7 +266,10 @@ class WanAttentionBlock(nn.Module):
                 y[:, active_indices, :] = y_active
                 
                 with torch.amp.autocast('cuda', dtype=torch.float32):
-                    x = x + y * e[2].squeeze(2)
+                    # 只更新激活token，冻结token保持原值
+                    x_new = x + y * e[2].squeeze(2)
+                    x[:, active_indices, :] = x_new[:, active_indices, :]
+                    # 冻结token保持x[:, frozen_indices, :]不变
                 
                 # Cross-attention & FFN也只在激活token上计算
                 def cross_attn_ffn_pruned(x, context, context_lens, e, active_indices):
@@ -279,8 +286,9 @@ class WanAttentionBlock(nn.Module):
                     with torch.amp.autocast('cuda', dtype=torch.float32):
                         x_active = x_active + ffn_out * e[5][:, active_indices].squeeze(2)
                     
-                    # 映射回原始位置
+                    # 映射回原始位置，只更新激活token
                     x[:, active_indices, :] = x_active
+                    # 冻结token保持原值不变
                     return x
                 
                 x = cross_attn_ffn_pruned(x, context, context_lens, e, active_indices)
