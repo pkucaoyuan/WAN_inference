@@ -439,11 +439,9 @@ class WanT2V:
                 is_high_noise_final = (is_high_noise_phase and 
                                      step_idx >= (max(high_noise_steps) - cfg_truncate_high_noise_steps + 1))
                 
-                # 暂时禁用token裁剪，确认性能瓶颈根源
+                # 计算当前步骤的active_mask（真正的token裁剪）
                 current_active_mask = None
-                
-                # TODO: 重新启用token裁剪，当前先确认基础性能
-                if False and token_pruner is not None:  # 暂时禁用token裁剪
+                if token_pruner is not None:
                     # 检查是否从高噪声专家切换到低噪声专家
                     prev_is_high_noise = getattr(self, '_prev_is_high_noise_phase', True)
                     if prev_is_high_noise and not is_high_noise_phase:
@@ -686,13 +684,16 @@ class WanT2V:
                             next_step_frozen_indices = torch.where(final_frozen_mask)[0]
                             next_step_active_indices = torch.where(~final_frozen_mask)[0]
                             
-                            # 输出累积冻结信息（如果有新增）
+                            # 调试累积冻结逻辑
                             if self.rank == 0:
                                 current_frozen_count = current_frozen_mask.sum().item()
                                 new_frozen_count = new_frozen_mask.sum().item()
                                 total_frozen_count = final_frozen_mask.sum().item()
-                                if new_frozen_count > 0:
-                                    print(f"   ❄️ 累积冻结: {current_frozen_count}+{new_frozen_count}={total_frozen_count} token")
+                                active_count = (~final_frozen_mask).sum().item()
+                                
+                                print(f"   🔍 Step {step_idx+1} 累积分析:")
+                                print(f"      📊 已冻结: {current_frozen_count}, 新冻结: {new_frozen_count}, 总冻结: {total_frozen_count}")
+                                print(f"      📊 激活token: {active_count}, 低于阈值的激活token: {(token_changes[~current_frozen_mask] < threshold_tensor).sum().item()}")
                             
                             # 确保下一步至少有一些token保持激活
                             if len(next_step_active_indices) == 0:

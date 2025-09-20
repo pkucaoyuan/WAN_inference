@@ -264,9 +264,11 @@ class WanAttentionBlock(nn.Module):
                 # Self-attention：优化版CAT算法，复用冻结token的QKV
                 # 只计算激活token的Q，复用冻结token的K,V
                 
-                # 获取冻结token的索引
-                frozen_indices = torch.tensor([i for i in range(x.size(1)) if i not in active_indices], 
-                                            device=x.device, dtype=torch.long)
+                # 高效获取冻结token的索引（避免Python循环）
+                all_indices = torch.arange(x.size(1), device=x.device, dtype=torch.long)
+                frozen_mask = torch.ones(x.size(1), dtype=torch.bool, device=x.device)
+                frozen_mask[active_indices] = False
+                frozen_indices = torch.where(frozen_mask)[0]
                 
                 # 计算激活token的归一化输入
                 x_norm = self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
