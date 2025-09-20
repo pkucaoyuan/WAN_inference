@@ -283,14 +283,13 @@ class WanAttentionBlock(nn.Module):
                     # 使用QKV缓存的混合attention计算
                     y_mixed = self._compute_mixed_attention(x_norm, active_indices, frozen_indices, 
                                                           seq_lens, grid_sizes, freqs)
-                    if self.rank == 0:
-                        frozen_count = len(frozen_indices)
-                        total_tokens = x_norm.size(1)
-                        print(f"   🔄 QKV缓存命中: {frozen_count}个token复用上一步QKV")
+                    # 移除rank检查，因为WanAttentionBlock没有rank属性
+                    frozen_count = len(frozen_indices)
+                    print(f"   🔄 QKV缓存命中: {frozen_count}个token复用上一步QKV")
                 else:
                     # 缓存无效或冻结token集合变化，完整计算
                     y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
-                    if self.rank == 0 and len(frozen_indices) > 0:
+                    if len(frozen_indices) > 0:
                         cache_reason = "无缓存" if not hasattr(self, '_frozen_qkv_cache') or not self._frozen_qkv_cache else "token集合变化"
                         print(f"   🔄 QKV缓存失效({cache_reason})，执行完整attention计算")
                 
