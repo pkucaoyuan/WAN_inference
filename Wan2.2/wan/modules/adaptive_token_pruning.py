@@ -388,9 +388,223 @@ class AdaptiveTokenPruning:
         summary = {
             'total_frozen_tokens': len(self.frozen_tokens),
             'frozen_token_list': list(self.frozen_tokens),
-            'scores_history': self.token_scores_history
+            'scores_history': self.token_scores_history,
+            'dynamic_threshold': self.dynamic_threshold,
+            'percentile_threshold': self.percentile_threshold,
+            'baseline_steps': self.baseline_steps,
+            'change_score_stats': dict(self.change_score_stats)
         }
         return summary
+    
+    def save_pruning_log(self, output_dir, step_idx=None):
+        """保存裁剪日志到输出文件夹"""
+        import os
+        import json
+        from datetime import datetime
+        
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 生成日志文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if step_idx is not None:
+            log_filename = f"token_pruning_step_{step_idx:02d}_{timestamp}.json"
+        else:
+            log_filename = f"token_pruning_summary_{timestamp}.json"
+        
+        log_path = os.path.join(output_dir, log_filename)
+        
+        # 准备日志数据
+        log_data = {
+            'timestamp': datetime.now().isoformat(),
+            'step_index': step_idx,
+            'pruning_summary': self.get_pruning_summary(),
+            'expert_name': self.expert_name,
+            'configuration': {
+                'baseline_steps': self.baseline_steps,
+                'percentile_threshold': self.percentile_threshold,
+                'change_weight': self.change_weight,
+                'self_attn_weight': self.self_attn_weight,
+                'cross_attn_weight': self.cross_attn_weight,
+                'start_layer': self.start_layer,
+                'end_layer': self.end_layer
+            }
+        }
+        
+        # 保存到JSON文件
+        with open(log_path, 'w', encoding='utf-8') as f:
+            json.dump(log_data, f, indent=2, ensure_ascii=False)
+        
+        return log_path
+    
+    def save_step_pruning_stats(self, output_dir, step_idx, pruning_stats):
+        """保存每一步的详细裁剪统计信息"""
+        import os
+        import json
+        from datetime import datetime
+        
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 生成步骤统计文件名
+        stats_filename = f"pruning_step_{step_idx:02d}_stats.json"
+        stats_path = os.path.join(output_dir, stats_filename)
+        
+        # 计算详细统计信息
+        detailed_stats = {
+            'step_index': step_idx,
+            'timestamp': datetime.now().isoformat(),
+            'expert_name': pruning_stats.get('expert', 'unknown'),
+            'pruning_applied': pruning_stats.get('pruning_applied', False),
+            
+            # 基本统计
+            'token_statistics': {
+                'total_tokens': pruning_stats.get('total_tokens', 0),
+                'image_tokens': pruning_stats.get('image_tokens', 0),
+                'active_image_tokens': pruning_stats.get('active_image_tokens', 0),
+                'pruned_image_tokens': pruning_stats.get('pruned_image_tokens', 0),
+                'newly_frozen': pruning_stats.get('newly_frozen', 0),
+                'cumulative_frozen': pruning_stats.get('cumulative_frozen', 0)
+            },
+            
+            # 裁剪比例
+            'pruning_ratios': {
+                'image_pruning_ratio': pruning_stats.get('image_pruning_ratio', 0.0),
+                'active_ratio': pruning_stats.get('active_image_tokens', 0) / max(pruning_stats.get('image_tokens', 1), 1),
+                'cumulative_pruning_ratio': pruning_stats.get('cumulative_frozen', 0) / max(pruning_stats.get('image_tokens', 1), 1)
+            },
+            
+            # 阈值和评分信息
+            'threshold_info': {
+                'dynamic_threshold': pruning_stats.get('dynamic_threshold'),
+                'percentile_threshold': pruning_stats.get('percentile_threshold'),
+                'avg_composite_score': pruning_stats.get('avg_composite_score', 0.0)
+            },
+            
+            # 变化分数统计
+            'change_score_stats': pruning_stats.get('change_score_stats', {})
+        }
+        
+        # 保存到JSON文件
+        with open(stats_path, 'w', encoding='utf-8') as f:
+            json.dump(detailed_stats, f, indent=2, ensure_ascii=False)
+        
+        # 同时输出到控制台
+        if detailed_stats['pruning_applied']:
+            print(f"📊 Step {step_idx} 裁剪统计:")
+            print(f"   激活Token: {detailed_stats['token_statistics']['active_image_tokens']}/{detailed_stats['token_statistics']['image_tokens']} "
+                  f"({detailed_stats['pruning_ratios']['active_ratio']:.1%})")
+            print(f"   累积裁剪: {detailed_stats['token_statistics']['cumulative_frozen']} "
+                  f"({detailed_stats['pruning_ratios']['cumulative_pruning_ratio']:.1%})")
+            print(f"   本步新增裁剪: {detailed_stats['token_statistics']['newly_frozen']}")
+            if detailed_stats['threshold_info']['dynamic_threshold']:
+                print(f"   动态阈值: {detailed_stats['threshold_info']['dynamic_threshold']:.4f}")
+        
+        return stats_path
+    
+    def generate_pruning_summary_report(self, output_dir):
+        """生成完整的裁剪过程汇总报告"""
+        import os
+        import json
+        from datetime import datetime
+        
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 生成汇总报告文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_filename = f"token_pruning_summary_report_{timestamp}.txt"
+        report_path = os.path.join(output_dir, report_filename)
+        
+        # 准备汇总数据
+        summary = self.get_pruning_summary()
+        
+        # 分析token评分历史，按步骤统计
+        step_stats = {}
+        for token_idx, history in summary['scores_history'].items():
+            for record in history:
+                step = record['layer']
+                if step not in step_stats:
+                    step_stats[step] = {
+                        'active_tokens': 0,
+                        'frozen_tokens': 0,
+                        'total_tokens': 0,
+                        'avg_score': 0.0,
+                        'score_sum': 0.0
+                    }
+                
+                step_stats[step]['total_tokens'] += 1
+                step_stats[step]['score_sum'] += record['composite_score']
+                
+                if record['is_active']:
+                    step_stats[step]['active_tokens'] += 1
+                else:
+                    step_stats[step]['frozen_tokens'] += 1
+        
+        # 计算平均分数
+        for step in step_stats:
+            if step_stats[step]['total_tokens'] > 0:
+                step_stats[step]['avg_score'] = step_stats[step]['score_sum'] / step_stats[step]['total_tokens']
+        
+        # 生成文本报告
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("=" * 80 + "\n")
+            f.write("WAN2.2 Token修剪过程详细报告\n")
+            f.write("=" * 80 + "\n")
+            f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"专家类型: {self.expert_name}\n")
+            f.write("\n")
+            
+            # 配置信息
+            f.write("📋 配置参数:\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"基准步数: {self.baseline_steps}\n")
+            f.write(f"百分位阈值: {self.percentile_threshold}%\n")
+            f.write(f"动态阈值: {self.dynamic_threshold:.4f}\n" if self.dynamic_threshold else "动态阈值: 未确定\n")
+            f.write(f"开始层数: {self.start_layer}\n")
+            f.write(f"结束层数: {self.end_layer}\n")
+            f.write(f"权重配置: 变化({self.change_weight:.1f}) + 自注意力({self.self_attn_weight:.1f}) + 跨模态({self.cross_attn_weight:.1f})\n")
+            f.write("\n")
+            
+            # 总体统计
+            f.write("📊 总体统计:\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"总冻结Token数: {summary['total_frozen_tokens']}\n")
+            f.write(f"变化分数统计: min={summary['change_score_stats'].get('min', 0):.4f}, "
+                   f"max={summary['change_score_stats'].get('max', 0):.4f}, "
+                   f"avg={summary['change_score_stats'].get('sum', 0) / max(summary['change_score_stats'].get('count', 1), 1):.4f}\n")
+            f.write("\n")
+            
+            # 按步骤详细统计
+            f.write("📈 分步骤统计:\n")
+            f.write("-" * 80 + "\n")
+            f.write(f"{'步骤':<6} {'总Token':<8} {'激活':<8} {'冻结':<8} {'激活率':<10} {'平均分数':<10}\n")
+            f.write("-" * 80 + "\n")
+            
+            for step in sorted(step_stats.keys()):
+                stats = step_stats[step]
+                active_ratio = stats['active_tokens'] / max(stats['total_tokens'], 1) * 100
+                f.write(f"{step:<6} {stats['total_tokens']:<8} {stats['active_tokens']:<8} "
+                       f"{stats['frozen_tokens']:<8} {active_ratio:<9.1f}% {stats['avg_score']:<10.4f}\n")
+            
+            f.write("\n")
+            
+            # 冻结Token列表
+            f.write("🧊 冻结Token列表:\n")
+            f.write("-" * 40 + "\n")
+            frozen_tokens = sorted(summary['frozen_token_list'])
+            for i, token_idx in enumerate(frozen_tokens):
+                if i % 10 == 0 and i > 0:
+                    f.write("\n")
+                f.write(f"{token_idx:4d} ")
+            f.write(f"\n\n共 {len(frozen_tokens)} 个Token被冻结\n")
+            
+            f.write("\n" + "=" * 80 + "\n")
+            f.write("报告结束\n")
+            f.write("=" * 80 + "\n")
+        
+        print(f"📄 裁剪汇总报告已保存: {report_path}")
+        return report_path
 
 def create_pruned_attention_mask(active_mask, original_mask=None):
     """

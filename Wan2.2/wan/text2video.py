@@ -252,7 +252,9 @@ class WanT2V:
                  seed=-1,
                  offload_model=True,
                  cfg_truncate_steps=5,
-                 cfg_truncate_high_noise_steps=3):
+                 cfg_truncate_high_noise_steps=3,
+                 output_dir=None,
+                 enable_token_pruning=False):
         r"""
         Generates video frames from text prompt using diffusion process.
 
@@ -380,6 +382,20 @@ class WanT2V:
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
 
+            # 初始化token裁剪器（如果启用）
+            token_pruner = None
+            if enable_token_pruning and output_dir is not None:
+                from .modules.adaptive_token_pruning import AdaptiveTokenPruning
+                token_pruner = AdaptiveTokenPruning(
+                    baseline_steps=5,
+                    percentile_threshold=20,
+                    start_layer=6,
+                    end_layer=35,
+                    expert_name="high_noise"
+                )
+                if self.rank == 0:
+                    print("🧠 Token裁剪器已启用")
+
             for step_idx, t in enumerate(tqdm(timesteps)):
                 latent_model_input = latents
                 timestep = [t]
@@ -442,5 +458,18 @@ class WanT2V:
             torch.cuda.synchronize()
         if dist.is_initialized():
             dist.barrier()
+
+        # 生成token裁剪日志（如果启用）
+        if token_pruner is not None and self.rank == 0 and output_dir is not None:
+            try:
+                # 生成详细的汇总报告
+                report_path = token_pruner.generate_pruning_summary_report(output_dir)
+                print(f"📄 Token裁剪报告已保存: {report_path}")
+                
+                # 保存最终的裁剪统计
+                final_log_path = token_pruner.save_pruning_log(output_dir)
+                print(f"📊 Token裁剪日志已保存: {final_log_path}")
+            except Exception as e:
+                print(f"⚠️ Token裁剪日志保存失败: {e}")
 
         return videos[0] if self.rank == 0 else None, getattr(self, 'total_switch_time', 0.0)

@@ -234,6 +234,11 @@ def _parse_args():
         action="store_true",
         default=False,
         help="Whether to convert model paramerters dtype.")
+    parser.add_argument(
+        "--enable_token_pruning",
+        action="store_true",
+        default=False,
+        help="Enable adaptive token pruning to reduce computation in high-noise expert.")
 
     # following args only works for s2v
     parser.add_argument(
@@ -446,6 +451,16 @@ def generate(args):
         inference_start = time.time()
         logging.info(f"开始推理...")
         print(f"🎬 CFG截断配置: 低噪声专家{args.cfg_truncate_steps}步, 高噪声专家{args.cfg_truncate_high_noise_steps}步")
+        # 创建输出文件夹结构（在推理前创建，以便传递给模型）
+        output_base_dir = Path("./outputs")
+        output_base_dir.mkdir(exist_ok=True)
+        
+        # 创建本次推理的子文件夹
+        formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        formatted_prompt = args.prompt.replace(" ", "_").replace("/", "_")[:30]
+        run_folder = output_base_dir / f"{args.task}_{formatted_time}_{formatted_prompt}"
+        run_folder.mkdir(exist_ok=True)
+        
         video, total_switch_time = wan_t2v.generate(
             args.prompt,
             size=SIZE_CONFIGS[args.size],
@@ -457,7 +472,9 @@ def generate(args):
             seed=args.base_seed,
             offload_model=args.offload_model,
             cfg_truncate_steps=args.cfg_truncate_steps,
-            cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps)
+            cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps,
+            output_dir=str(run_folder),
+            enable_token_pruning=args.enable_token_pruning)
         total_inference_time = time.time() - inference_start
         pure_inference_time = total_inference_time - total_switch_time
         
@@ -561,15 +578,6 @@ def generate(args):
             cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps)
 
     if rank == 0:
-        # 创建输出文件夹结构
-        output_base_dir = Path("./outputs")
-        output_base_dir.mkdir(exist_ok=True)
-        
-        # 创建本次推理的子文件夹
-        formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        formatted_prompt = args.prompt.replace(" ", "_").replace("/", "_")[:30]
-        run_folder = output_base_dir / f"{args.task}_{formatted_time}_{formatted_prompt}"
-        run_folder.mkdir(exist_ok=True)
         
         # 视频文件路径
         if args.save_file is None:
