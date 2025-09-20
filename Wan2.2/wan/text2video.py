@@ -441,9 +441,16 @@ class WanT2V:
                 if token_pruner is not None and is_high_noise_phase:
                     expert_name = "high_noise"
                     
-                    # 在基准步骤收集统计信息
-                    if step_idx + 1 <= token_pruner.baseline_steps:
-                        # 基准期：完全推理，收集token变化统计
+                    # 前1-4步：只保存latents，不收集统计
+                    if step_idx < token_pruner.baseline_steps - 1:
+                        # 保存当前latents用于后续比较
+                        self._prev_latents = latents[0].clone()
+                        if self.rank == 0:
+                            print(f"📝 Step {step_idx+1} 基准期：保存latents状态")
+                    
+                    # 第5步：收集所有token信息
+                    elif step_idx == token_pruner.baseline_steps - 1:
+                        # 第5步：收集所有token的变化信息用于确定动态阈值
                         if step_idx > 0:  # 需要前一步的latents来计算变化
                             prev_latents = getattr(self, '_prev_latents', None)
                             if prev_latents is not None:
@@ -468,7 +475,7 @@ class WanT2V:
                                                 token_pruner.update_change_score_statistics(patch_change.item())
                                 
                                 if self.rank == 0:
-                                    print(f"📊 Step {step_idx+1} 收集变化统计: {token_pruner.change_score_stats['count']} 个token变化值")
+                                    print(f"📊 Step {step_idx+1} 收集所有token信息: {token_pruner.change_score_stats['count']} 个token变化值")
                         
                         # 保存当前latents用于下一步比较
                         self._prev_latents = latents[0].clone()
@@ -528,17 +535,24 @@ class WanT2V:
                                 # 如果维度不匹配，使用flatten后的前N个值
                                 token_changes = relative_change.flatten()[:actual_token_count]
                             
-                            # 基于真实变化幅度创建active_mask
-                            # 按照20%阈值逻辑：冻结变化最小的20%token，保留变化大的80%token
-                            sorted_indices = sorted(range(len(token_changes)), 
-                                                   key=lambda i: token_changes[i].item(), reverse=True)
+                            # 基于真实变化幅度与第5步阈值比较进行裁剪
+                            active_token_indices = []
+                            frozen_token_indices = []
                             
-                            # 计算要保留的token数量（100% - 阈值百分比）
-                            keep_ratio = (100 - token_pruner.percentile_threshold) / 100
-                            num_active_tokens = max(int(len(token_changes) * keep_ratio), 1)
+                            for i, change_val in enumerate(token_changes):
+                                # 与第5步确定的动态阈值比较
+                                if change_val.item() >= token_pruner.dynamic_threshold:
+                                    active_token_indices.append(i)  # 变化大于阈值，保持激活
+                                else:
+                                    frozen_token_indices.append(i)  # 变化小于阈值，冻结
                             
-                            # 保留变化最大的top-k token
-                            active_token_indices = sorted_indices[:num_active_tokens]
+                            # 确保至少有一些token保持激活
+                            if len(active_token_indices) == 0:
+                                # 如果所有token都低于阈值，保留变化最大的前10%
+                                sorted_indices = sorted(range(len(token_changes)), 
+                                                       key=lambda i: token_changes[i].item(), reverse=True)
+                                min_active = max(len(token_changes) // 10, 1)
+                                active_token_indices = sorted_indices[:min_active]
                             
                             # 创建完整的active_mask（用于模型计算）
                             # 使用模型的实际seq_len参数
@@ -561,11 +575,12 @@ class WanT2V:
                                     total_image_tokens = image_token_end
                                     frozen_count = len(inactive_indices)
                                     
-                                    print(f"🔥 Step {step_idx+1} 真实Token裁剪:")
+                                    print(f"🔥 Step {step_idx+1} 基于阈值的Token裁剪:")
                                     print(f"   📊 激活Token: {active_count}/{total_image_tokens} ({100*active_count/total_image_tokens:.1f}%)")
-                                    print(f"   🧊 冻结Token: {frozen_count} 个")
+                                    print(f"   🧊 冻结Token: {frozen_count} 个 (变化 < {token_pruner.dynamic_threshold:.4f})")
                                     print(f"   💾 实际节省计算: {100*frozen_count/total_image_tokens:.1f}%")
-                                    print(f"   🎯 动态阈值: {token_pruner.dynamic_threshold:.4f}")
+                                    print(f"   🎯 基于第5步动态阈值: {token_pruner.dynamic_threshold:.4f}")
+                                    print(f"   📈 自适应裁剪: 变化小的token自动冻结")
                                     
                                     # 计算实际的节省（CAT算法 + QKV缓存优化）
                                     ffn_savings = 1 - (active_count / total_image_tokens)             # FFN: O(N) -> O(k)
