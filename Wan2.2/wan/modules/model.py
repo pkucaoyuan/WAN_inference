@@ -258,14 +258,14 @@ class WanAttentionBlock(nn.Module):
                 e_active = tuple(e_elem[:, active_indices, :] if e_elem.size(1) == x.size(1) else e_elem 
                                for e_elem in e)
                 
-                # Self-attention：只在激活token之间计算（最大节省）
-                # 冻结token完全不参与任何attention计算
-                x_active_norm = self.norm1(x_active).float() * (1 + e_active[1].squeeze(2)) + e_active[0].squeeze(2)
-                y_active = self.self_attn(x_active_norm, seq_lens, grid_sizes, freqs)
+                # Self-attention：按CAT算法，所有token参与attention，但只更新激活token
+                # Algorithm 1: Line 1-2: 计算完整的Q,K,V和attention矩阵
+                x_norm = self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
+                y_full = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)  # 完整attention计算
                 
-                # 将结果映射回原始位置，冻结token完全不参与
+                # Algorithm 1: Line 3-5: 只有选中token (Ts,t) 使用attention结果更新
                 y = torch.zeros_like(x)
-                y[:, active_indices, :] = y_active
+                y[:, active_indices, :] = y_full[:, active_indices, :]  # 只保留激活token的attention输出
                 
                 with torch.amp.autocast('cuda', dtype=torch.float32):
                     # 只更新激活token，冻结token保持原值
@@ -273,27 +273,25 @@ class WanAttentionBlock(nn.Module):
                     x[:, active_indices, :] = x_new[:, active_indices, :]
                     # 冻结token保持x[:, frozen_indices, :]不变
                 
-                # Cross-attention & FFN：只在激活token上计算（真正节省计算）
+                # Cross-attention & FFN：按CAT算法实现
                 def cross_attn_ffn_pruned(x, context, context_lens, e, active_indices):
-                    # 只处理激活token，真正节省计算
+                    # Algorithm 1: Cross-attention所有token参与，但只更新激活token
+                    cross_out_full = self.cross_attn(self.norm3(x), context, context_lens)
+                    x = x + cross_out_full  # 所有token都接收cross-attention结果
+                    
+                    # Algorithm 1: Line 4: 只有选中token (Ts,t) 通过MLP(FFN)更新
                     x_active = x[:, active_indices, :]
-                    
-                    # Cross-attention：只计算激活token与文本的attention
-                    cross_out = self.cross_attn(self.norm3(x_active), context, context_lens)
-                    x_active = x_active + cross_out
-                    
-                    # FFN：只在激活token上计算（真正的计算节省）
                     e_ffn_active = tuple(e_elem[:, active_indices, :] if e_elem.size(1) == x.size(1) else e_elem 
                                        for e_elem in e)
                     ffn_input = self.norm2(x_active).float() * (1 + e_ffn_active[4].squeeze(2)) + e_ffn_active[3].squeeze(2)
-                    ffn_out = self.ffn(ffn_input)  # 🔥 真正减少FFN计算量
+                    ffn_out = self.ffn(ffn_input)  # 🔥 只计算激活token的FFN
                     
                     with torch.amp.autocast('cuda', dtype=torch.float32):
                         x_active = x_active + ffn_out * e_ffn_active[5].squeeze(2)
                     
-                    # 映射回原始位置，只更新激活token
+                    # Algorithm 1: Line 4: 更新选中token的hidden state
                     x[:, active_indices, :] = x_active
-                    # 冻结token完全保持原值不变
+                    # Algorithm 1: Line 7: 未选中token保持上一步状态（已经在x中）
                     return x
                 
                 x = cross_attn_ffn_pruned(x, context, context_lens, e, active_indices)

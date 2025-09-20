@@ -570,14 +570,16 @@ class WanT2V:
                                     print(f"   💾 实际节省计算: {100*frozen_count/total_image_tokens:.1f}%")
                                     print(f"   🎯 动态阈值: {token_pruner.dynamic_threshold:.4f}")
                                     
-                                    # 计算实际的节省（最大节省版本）
-                                    attention_savings = 1 - (active_count / total_image_tokens) ** 2  # Self-attention: O(N²) -> O(k²)
-                                    cross_attn_savings = 1 - (active_count / total_image_tokens)      # Cross-attention: O(N) -> O(k)
+                                    # 计算实际的节省（按CAT算法）
+                                    # Self-attention: 完整计算，无节省（需要完整Q,K,V矩阵）
+                                    # Cross-attention: 完整计算，无节省（所有token与文本交互）
                                     ffn_savings = 1 - (active_count / total_image_tokens)             # FFN: O(N) -> O(k)
-                                    print(f"   ⚡ Self-Attention计算节省: {100*attention_savings:.1f}%")
-                                    print(f"   ⚡ Cross-Attention计算节省: {100*cross_attn_savings:.1f}%")
+                                    update_savings = 1 - (active_count / total_image_tokens)          # Hidden state更新节省
+                                    
                                     print(f"   ⚡ FFN计算节省: {100*ffn_savings:.1f}%")
-                                    print(f"   🧊 冻结Token: 完全不参与任何计算，保持上一步状态")
+                                    print(f"   ⚡ Hidden State更新节省: {100*update_savings:.1f}%")
+                                    print(f"   📝 Self/Cross-Attention: 完整计算（保持信息流）")
+                                    print(f"   🧊 冻结Token: 复用上一步hidden state，跳过FFN和更新")
                         
                         # 保存当前latents
                         self._prev_latents = latents[0].clone()
