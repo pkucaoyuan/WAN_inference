@@ -254,7 +254,11 @@ class WanT2V:
                  cfg_truncate_steps=5,
                  cfg_truncate_high_noise_steps=3,
                  output_dir=None,
-                 enable_token_pruning=False):
+                 enable_token_pruning=False,
+                 pruning_threshold=20,
+                 pruning_baseline_steps=5,
+                 pruning_start_layer=6,
+                 pruning_end_layer=35):
         r"""
         Generates video frames from text prompt using diffusion process.
 
@@ -387,14 +391,17 @@ class WanT2V:
             if enable_token_pruning and output_dir is not None:
                 from .modules.adaptive_token_pruning import AdaptiveTokenPruning
                 token_pruner = AdaptiveTokenPruning(
-                    baseline_steps=5,
-                    percentile_threshold=20,
-                    start_layer=6,
-                    end_layer=35,
+                    baseline_steps=pruning_baseline_steps,
+                    percentile_threshold=pruning_threshold,
+                    start_layer=pruning_start_layer,
+                    end_layer=pruning_end_layer,
                     expert_name="high_noise"
                 )
                 if self.rank == 0:
-                    print("🧠 Token裁剪器已启用")
+                    print(f"🧠 Token裁剪器已启用")
+                    print(f"   📊 百分位阈值: {pruning_threshold}% (越高越激进)")
+                    print(f"   🔢 基准步数: {pruning_baseline_steps}")
+                    print(f"   📍 裁剪范围: Layer {pruning_start_layer}-{pruning_end_layer}")
 
             for step_idx, t in enumerate(tqdm(timesteps)):
                 latent_model_input = latents
