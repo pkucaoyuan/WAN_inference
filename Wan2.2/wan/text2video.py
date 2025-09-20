@@ -473,8 +473,8 @@ class WanT2V:
                         # 保存当前latents用于下一步比较
                         self._prev_latents = latents[0].clone()
                         
-                        # 基准期结束时计算动态阈值
-                        if step_idx + 1 == token_pruner.baseline_steps:
+                        # 基准期结束时计算动态阈值（第5步结束后）
+                        if step_idx == token_pruner.baseline_steps - 1:
                             # 基于真实变化统计计算动态阈值
                             stats = token_pruner.change_score_stats
                             if stats['count'] > 0 and len(stats['values']) > 0:
@@ -495,8 +495,8 @@ class WanT2V:
                                         print(f"⚠️ 基准期未收集到有效的变化值，使用默认阈值")
                                     token_pruner.dynamic_threshold = 0.01  # 默认阈值
                     
-                    # 应用token裁剪（基于真实latent变化）
-                    elif token_pruner.should_apply_pruning(step_idx + 1, expert_name):
+                    # 应用token裁剪（基于真实latent变化）- 从第6步开始
+                    elif token_pruner.should_apply_pruning(step_idx, expert_name):
                         prev_latents = getattr(self, '_prev_latents', None)
                         if prev_latents is not None and token_pruner.dynamic_threshold is not None:
                             # 计算真实的token变化幅度
@@ -529,19 +529,16 @@ class WanT2V:
                                 token_changes = relative_change.flatten()[:actual_token_count]
                             
                             # 基于真实变化幅度创建active_mask
-                            active_token_indices = []
-                            for i, change_val in enumerate(token_changes):
-                                # 使用真实的变化值与动态阈值比较
-                                if change_val.item() >= token_pruner.dynamic_threshold:
-                                    active_token_indices.append(i)
+                            # 按照20%阈值逻辑：冻结变化最小的20%token，保留变化大的80%token
+                            sorted_indices = sorted(range(len(token_changes)), 
+                                                   key=lambda i: token_changes[i].item(), reverse=True)
                             
-                            # 确保至少保留30%的token
-                            min_active_tokens = max(len(token_changes) // 3, 1)
-                            if len(active_token_indices) < min_active_tokens:
-                                # 按变化幅度排序，保留top-k
-                                sorted_indices = sorted(range(len(token_changes)), 
-                                                       key=lambda i: token_changes[i].item(), reverse=True)
-                                active_token_indices = sorted_indices[:min_active_tokens]
+                            # 计算要保留的token数量（100% - 阈值百分比）
+                            keep_ratio = (100 - token_pruner.percentile_threshold) / 100
+                            num_active_tokens = max(int(len(token_changes) * keep_ratio), 1)
+                            
+                            # 保留变化最大的top-k token
+                            active_token_indices = sorted_indices[:num_active_tokens]
                             
                             # 创建完整的active_mask（用于模型计算）
                             # 使用模型的实际seq_len参数

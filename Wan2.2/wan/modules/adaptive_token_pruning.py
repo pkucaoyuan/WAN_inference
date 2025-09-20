@@ -78,7 +78,7 @@ class AdaptiveTokenPruning:
             return False
             
         # 2. 前baseline_steps步完全推理，不修剪
-        if layer_idx <= self.baseline_steps:
+        if layer_idx < self.baseline_steps:
             return False
             
         # 3. 只在指定层数范围内应用（渐进式修剪）

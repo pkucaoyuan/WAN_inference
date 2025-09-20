@@ -285,12 +285,12 @@ class WanAttentionBlock(nn.Module):
                 
                 # Algorithm 1: Line 3-5: 只有选中token使用attention结果更新
                 y = torch.zeros_like(x)
-                y[:, active_indices, :] = y_mixed[:, active_indices, :]
+                y[:, active_indices, :] = y_mixed[:, active_indices, :].to(x.dtype)
                 
                 with torch.amp.autocast('cuda', dtype=torch.float32):
                     # 只更新激活token，冻结token保持原值
                     x_new = x + y * e[2].squeeze(2)
-                    x[:, active_indices, :] = x_new[:, active_indices, :]
+                    x[:, active_indices, :] = x_new[:, active_indices, :].to(x.dtype)
                     # 冻结token保持x[:, frozen_indices, :]不变
                 
                 # Cross-attention & FFN：按CAT算法实现
@@ -310,7 +310,7 @@ class WanAttentionBlock(nn.Module):
                         x_active = x_active + ffn_out * e_ffn_active[5].squeeze(2)
                     
                     # Algorithm 1: Line 4: 更新选中token的hidden state
-                    x[:, active_indices, :] = x_active
+                    x[:, active_indices, :] = x_active.to(x.dtype)
                     # Algorithm 1: Line 7: 未选中token保持上一步状态（已经在x中）
                     return x
                 
@@ -412,7 +412,7 @@ class WanAttentionBlock(nn.Module):
             attention_weights = torch.softmax(attention_scores, dim=-1)
             attention_out = torch.matmul(attention_weights, v_full)  # [B, L, H, d]
             
-            return attention_out.flatten(-2)  # [B, L, H*d]
+            return attention_out.flatten(-2).to(x_norm.dtype)  # [B, L, H*d] 保持数据类型一致
         
         # 回退到完整计算
         return self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
