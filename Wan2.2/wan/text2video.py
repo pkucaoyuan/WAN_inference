@@ -488,22 +488,8 @@ class WanT2V:
                                 frozen_count = len(frozen_indices)
                                 total_image_tokens = active_count + frozen_count
                                 
-                                print(f"🔥 Step {step_idx+1} 使用预测的Token裁剪:")
-                                print(f"   📊 激活Token: {active_count}/{total_image_tokens} ({100*active_count/total_image_tokens:.1f}%)")
-                                print(f"   🧊 冻结Token: {frozen_count} 个 (基于上一步预测)")
-                                print(f"   💾 实际节省计算: {100*frozen_count/total_image_tokens:.1f}%")
-                                print(f"   🎯 使用上一步的变化分数预测")
-                                
-                                # 计算实际的节省
-                                ffn_savings = 1 - (active_count / total_image_tokens)
-                                update_savings = 1 - (active_count / total_image_tokens)
-                                
-                                print(f"   ⚡ FFN计算节省: {100*ffn_savings:.1f}%")
-                                print(f"   ⚡ Hidden State更新节省: {100*update_savings:.1f}%") 
-                                print(f"   🔄 QKV缓存: 冻结token复用上一步QKV投影")
-                                print(f"   📝 Self-Attention: 混合计算（新QKV + 缓存QKV）")
-                                print(f"   📝 Cross-Attention: 完整计算（所有token参与）")
-                                print(f"   🧊 冻结Token: 跳过FFN+QKV投影，保持hidden state不变")
+                                # 简化输出，只显示关键信息
+                                print(f"🔥 Step {step_idx+1}: 激活{active_count}/{total_image_tokens} ({100*active_count/total_image_tokens:.1f}%), FFN节省{100*frozen_count/total_image_tokens:.1f}%")
                         
                         # 更新token_pruner的累积冻结状态
                         for idx in frozen_indices.cpu().tolist():
@@ -666,18 +652,8 @@ class WanT2V:
                             patch_size = (1, 2, 2)  # 从模型配置获取
                             actual_token_count = F * (H // patch_size[1]) * (W // patch_size[2])
                             
-                            if self.rank == 0:
-                                print(f"🔍 第{step_idx+1}步Latent调试:")
-                                print(f"   📐 Latent形状: {latents[0].shape} -> C={C}, F={F}, H={H}, W={W}")
-                                print(f"   🧮 Token数量计算: {F} * ({H}//{patch_size[1]}) * ({W}//{patch_size[2]}) = {actual_token_count}")
-                                print(f"   📊 相对变化形状: {relative_change.shape}, 维度: {len(relative_change.shape)}D")
-                            
-                            # 高效计算每个token位置的变化（向量化操作）
-                            # relative_change形状: [F, H, W] = [1, 90, 160]
-                            # 使用unfold进行高效的patch提取，避免嵌套循环
-                            
+                            # 高效计算每个token位置的变化（向量化操作，减少调试输出）
                             # 对H和W维度进行patch分组
-                            # unfold(dimension, size, step) 
                             patches = relative_change.unfold(1, patch_size[1], patch_size[1])  # [F, H//2, W, patch_h]
                             patches = patches.unfold(2, patch_size[2], patch_size[2])          # [F, H//2, W//2, patch_h, patch_w]
                             
@@ -686,12 +662,6 @@ class WanT2V:
                             
                             # 展平为1D tensor：[F * H//2 * W//2] = [3600]
                             token_changes = token_changes.view(-1)
-                            
-                            if self.rank == 0:
-                                print(f"⚡ 高效Token变化计算: {token_changes.shape} (向量化操作，避免3600次循环)")
-                            
-                            if self.rank == 0:
-                                print(f"✅ Step {step_idx+1} Token数量验证: 预期={actual_token_count}, 实际处理={len(token_changes)}")
                             
                             # 高效的token选择（GPU tensor操作，避免Python循环）
                             threshold_tensor = torch.tensor(token_pruner.dynamic_threshold, 
@@ -725,12 +695,9 @@ class WanT2V:
                                 active_mask[all_frozen_indices] = False
                             next_step_active_indices = torch.where(active_mask)[0]
                             
-                            if self.rank == 0:
-                                print(f"   🔍 累积冻结分析:")
-                                print(f"      🧊 之前已冻结: {len(current_frozen_set)} 个token")
-                                print(f"      📊 当前激活评估: {len(current_active_indices)} 个token")
-                                print(f"      ❄️ 新增冻结: {len(new_frozen_candidates)} 个token")
-                                print(f"      🎯 累积冻结总数: {len(all_frozen_indices)} 个token")
+                            # 减少调试输出，只在重要变化时输出
+                            if self.rank == 0 and len(new_frozen_candidates) > 0:
+                                print(f"   ❄️ 累积冻结: {len(current_frozen_set)}+{len(new_frozen_candidates)}={len(all_frozen_indices)} token")
                             
                             # 确保下一步至少有一些token保持激活
                             if len(next_step_active_indices) == 0:
@@ -756,12 +723,8 @@ class WanT2V:
                                 next_active_count = len(next_step_active_indices)
                                 total_image_tokens = len(token_changes)
                                 
-                                print(f"🔮 Step {step_idx+1} 预测下一步Token裁剪:")
-                                print(f"   📊 下一步激活Token: {next_active_count}/{total_image_tokens} ({100*next_active_count/total_image_tokens:.1f}%)")
-                                print(f"   🧊 下一步冻结Token: {next_frozen_count} 个")
-                                print(f"   💾 预期节省计算: {100*next_frozen_count/total_image_tokens:.1f}%")
-                                print(f"   🎯 累积冻结策略: 已冻结保持+新增低变化token")
-                                print(f"   ⚡ GPU tensor操作: 避免3600次.item()调用")
+                                # 简化输出，只显示关键信息
+                                print(f"🔮 Step {step_idx+1}→{step_idx+2}: 激活{next_active_count}/{total_image_tokens} ({100*next_active_count/total_image_tokens:.1f}%), 冻结{next_frozen_count}个")
                         
                         # 保存当前latents
                         self._prev_latents = latents[0].clone()
@@ -770,11 +733,8 @@ class WanT2V:
                 model_kwargs_c = {**arg_c, 'active_mask': current_active_mask}
                 model_kwargs_null = {**arg_null, 'active_mask': current_active_mask}
                 
-                # 验证active_mask确实被使用（调试信息）
-                if current_active_mask is not None and self.rank == 0:
-                    active_ratio = current_active_mask.sum().item() / current_active_mask.size(0)
-                    print(f"   🔍 Active_mask验证: {current_active_mask.sum().item()}/{current_active_mask.size(0)} "
-                          f"({100*active_ratio:.1f}%) 将传递给模型")
+                # 移除active_mask验证输出，减少终端噪音和GPU-CPU传输
+                pass
 
                 if is_final_steps or is_high_noise_final:
                     # CFG截断：只进行无条件预测（真正节省50%计算）

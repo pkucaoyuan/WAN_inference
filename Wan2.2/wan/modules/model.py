@@ -253,7 +253,7 @@ class WanAttentionBlock(nn.Module):
             if len(active_indices) < x.size(1):  # 确实有token被裁剪
                 # 调试信息：确认裁剪生效
                 if hasattr(self, '_debug_printed') is False:
-                    print(f"🔥 Transformer层Token裁剪生效: {len(active_indices)}/{x.size(1)} token激活")
+                    # 移除重复的Transformer层输出，减少终端噪音
                     self._debug_printed = True
                 # 只对激活token进行计算
                 x_active = x[:, active_indices, :]
@@ -283,15 +283,13 @@ class WanAttentionBlock(nn.Module):
                     # 使用QKV缓存的混合attention计算
                     y_mixed = self._compute_mixed_attention(x_norm, active_indices, frozen_indices, 
                                                           seq_lens, grid_sizes, freqs)
-                    # 移除rank检查，因为WanAttentionBlock没有rank属性
-                    frozen_count = len(frozen_indices)
-                    print(f"   🔄 QKV缓存命中: {frozen_count}个token复用上一步QKV")
+                    # 简化QKV缓存输出
+                    pass  # QKV缓存命中，无需输出
                 else:
                     # 缓存无效或冻结token集合变化，完整计算
                     y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
-                    if len(frozen_indices) > 0:
-                        cache_reason = "无缓存" if not hasattr(self, '_frozen_qkv_cache') or not self._frozen_qkv_cache else "token集合变化"
-                        print(f"   🔄 QKV缓存失效({cache_reason})，执行完整attention计算")
+                    # 移除QKV缓存失效的输出，减少终端噪音
+                    pass
                 
                 # 缓存当前的Q,K,V用于下一步（基于预测的冻结token）
                 self._cache_frozen_qkv(x_norm, frozen_indices, seq_lens, grid_sizes, freqs)
