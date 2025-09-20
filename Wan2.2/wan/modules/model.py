@@ -271,9 +271,31 @@ class WanAttentionBlock(nn.Module):
                 # 计算激活token的归一化输入
                 x_norm = self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
                 
-                # 暂时禁用QKV缓存，因为冻结token集合每步都在变化
-                # TODO: 未来可以实现更智能的缓存策略
-                y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
+                # 检查是否有缓存的冻结token QKV且冻结token集合匹配
+                cache_valid = (hasattr(self, '_frozen_qkv_cache') and 
+                              self._frozen_qkv_cache and 
+                              len(frozen_indices) > 0 and
+                              self._frozen_qkv_cache['valid'] and
+                              len(self._frozen_qkv_cache['frozen_indices']) == len(frozen_indices) and
+                              torch.equal(self._frozen_qkv_cache['frozen_indices'], frozen_indices))
+                
+                if cache_valid:
+                    # 使用QKV缓存的混合attention计算
+                    y_mixed = self._compute_mixed_attention(x_norm, active_indices, frozen_indices, 
+                                                          seq_lens, grid_sizes, freqs)
+                    if self.rank == 0:
+                        frozen_count = len(frozen_indices)
+                        total_tokens = x_norm.size(1)
+                        print(f"   🔄 QKV缓存命中: {frozen_count}个token复用上一步QKV")
+                else:
+                    # 缓存无效或冻结token集合变化，完整计算
+                    y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
+                    if self.rank == 0 and len(frozen_indices) > 0:
+                        cache_reason = "无缓存" if not hasattr(self, '_frozen_qkv_cache') or not self._frozen_qkv_cache else "token集合变化"
+                        print(f"   🔄 QKV缓存失效({cache_reason})，执行完整attention计算")
+                
+                # 缓存当前的Q,K,V用于下一步（基于预测的冻结token）
+                self._cache_frozen_qkv(x_norm, frozen_indices, seq_lens, grid_sizes, freqs)
                 
                 # Algorithm 1: Line 3-5: 只有选中token使用attention结果更新
                 y = torch.zeros_like(x)

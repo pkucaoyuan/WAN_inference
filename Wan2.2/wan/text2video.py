@@ -438,6 +438,27 @@ class WanT2V:
                 
                 # 计算当前步骤的active_mask（真正的token裁剪）
                 current_active_mask = None
+                
+                # 专家切换检测：从高噪声切换到低噪声时清除token裁剪状态
+                if token_pruner is not None:
+                    # 检查是否从高噪声专家切换到低噪声专家
+                    prev_is_high_noise = getattr(self, '_prev_is_high_noise_phase', True)
+                    if prev_is_high_noise and not is_high_noise_phase:
+                        # 专家切换：清除所有token裁剪预测状态
+                        if hasattr(self, '_next_step_frozen_indices'):
+                            delattr(self, '_next_step_frozen_indices')
+                        if hasattr(self, '_next_step_active_indices'):
+                            delattr(self, '_next_step_active_indices')
+                        if hasattr(self, '_prev_latents'):
+                            delattr(self, '_prev_latents')
+                        
+                        if self.rank == 0:
+                            print(f"🔄 专家切换: 高噪声→低噪声，清除Token裁剪状态")
+                            print(f"   🔓 低噪声专家: 100%token激活，完整推理")
+                    
+                    # 记录当前专家状态
+                    self._prev_is_high_noise_phase = is_high_noise_phase
+                
                 if token_pruner is not None and is_high_noise_phase:
                     expert_name = "high_noise"
                     
@@ -476,9 +497,10 @@ class WanT2V:
                                 
                                 print(f"   ⚡ FFN计算节省: {100*ffn_savings:.1f}%")
                                 print(f"   ⚡ Hidden State更新节省: {100*update_savings:.1f}%") 
-                                print(f"   📝 Self-Attention: 完整计算（所有token参与）")
+                                print(f"   🔄 QKV缓存: 冻结token复用上一步QKV投影")
+                                print(f"   📝 Self-Attention: 混合计算（新QKV + 缓存QKV）")
                                 print(f"   📝 Cross-Attention: 完整计算（所有token参与）")
-                                print(f"   🧊 冻结Token: 跳过FFN计算，保持hidden state不变")
+                                print(f"   🧊 冻结Token: 跳过FFN+QKV投影，保持hidden state不变")
                         
                         # 清除预测结果，避免重复使用
                         delattr(self, '_next_step_frozen_indices')
@@ -573,6 +595,41 @@ class WanT2V:
                                             print(f"🎯 动态阈值已确定: {token_pruner.dynamic_threshold:.4f} (第{token_pruner.percentile_threshold}百分位数)")
                                             print(f"   📊 基于{len(valid_changes)}个有效token变化值计算")
                                             print(f"   📈 变化范围: {min(valid_changes):.4f} - {max(valid_changes):.4f}")
+                                        
+                                        # ✅ 第5步立即预测第6步的冻结token
+                                        threshold_tensor = torch.tensor(token_pruner.dynamic_threshold, 
+                                                                      device=token_changes_tensor.device, 
+                                                                      dtype=token_changes_tensor.dtype)
+                                        
+                                        # 基于第5步的变化分数预测第6步的冻结token
+                                        frozen_mask = token_changes_tensor < threshold_tensor
+                                        active_mask = ~frozen_mask
+                                        
+                                        next_step_frozen_indices = torch.where(frozen_mask)[0]
+                                        next_step_active_indices = torch.where(active_mask)[0]
+                                        
+                                        # 确保第6步至少有一些token保持激活
+                                        if len(next_step_active_indices) == 0:
+                                            _, sorted_indices = torch.sort(token_changes_tensor, descending=True)
+                                            min_active = max(len(token_changes_tensor) // 10, 1)
+                                            next_step_active_indices = sorted_indices[:min_active]
+                                            next_step_frozen_indices = sorted_indices[min_active:]
+                                        
+                                        # 存储预测结果供第6步使用
+                                        self._next_step_frozen_indices = next_step_frozen_indices
+                                        self._next_step_active_indices = next_step_active_indices
+                                        
+                                        if self.rank == 0:
+                                            next_frozen_count = len(next_step_frozen_indices)
+                                            next_active_count = len(next_step_active_indices)
+                                            total_tokens = len(token_changes_tensor)
+                                            
+                                            print(f"🔮 第5步预测第6步Token裁剪:")
+                                            print(f"   📊 第6步激活Token: {next_active_count}/{total_tokens} ({100*next_active_count/total_tokens:.1f}%)")
+                                            print(f"   🧊 第6步冻结Token: {next_frozen_count} 个")
+                                            print(f"   💾 预期节省计算: {100*next_frozen_count/total_tokens:.1f}%")
+                                            print(f"   🎯 基于第5步变化分数预测")
+                                            
                                     else:
                                         if self.rank == 0:
                                             print(f"⚠️ 第5步未收集到有效的变化值，使用默认阈值")
