@@ -15,17 +15,19 @@ class AdaptiveTokenPruning:
     """
     
     def __init__(self, 
-                 change_threshold=0.01,        # 变化阈值
-                 min_active_ratio=0.3,         # 最小激活token比例
-                 start_layer=20,               # 开始修剪的层数
+                 pruning_threshold=0.5,        # 固定修剪阈值（归一化后）
+                 start_layer=15,               # 开始修剪的层数（高噪声专家中后期）
+                 end_layer=35,                 # 结束修剪的层数（高噪声专家结束前）
                  change_weight=0.4,            # token变化权重
                  self_attn_weight=0.3,         # 自注意力权重
                  cross_attn_weight=0.3,        # 跨模态注意力权重
                  image_token_start=0,          # 图像token起始索引
-                 text_token_start=None):       # 文本token起始索引
-        self.change_threshold = change_threshold
-        self.min_active_ratio = min_active_ratio
+                 text_token_start=None,        # 文本token起始索引
+                 expert_name="high_noise"):    # 专家名称，只在高噪声专家使用
+        self.pruning_threshold = pruning_threshold
         self.start_layer = start_layer
+        self.end_layer = end_layer
+        self.expert_name = expert_name
         
         # 加权系数
         self.change_weight = change_weight
@@ -40,6 +42,13 @@ class AdaptiveTokenPruning:
         self.token_states = {}
         self.frozen_tokens = set()
         self.token_scores_history = {}
+        
+        # 归一化统计（用于分数归一化）
+        self.score_stats = {
+            'change': {'min': float('inf'), 'max': 0.0, 'sum': 0.0, 'count': 0},
+            'self_attn': {'min': float('inf'), 'max': 0.0, 'sum': 0.0, 'count': 0},
+            'cross_attn': {'min': float('inf'), 'max': 0.0, 'sum': 0.0, 'count': 0}
+        }
         
     def calculate_image_self_attention_score(self, self_attn_weights, token_idx, seq_len):
         """
@@ -88,10 +97,38 @@ class AdaptiveTokenPruning:
         score = cross_attn.mean(dim=0).sum().item()
         return score
     
+    def update_score_statistics(self, scores_dict):
+        """更新分数统计信息用于归一化"""
+        for score_type, value in scores_dict.items():
+            if score_type in self.score_stats:
+                stats = self.score_stats[score_type]
+                stats['min'] = min(stats['min'], value)
+                stats['max'] = max(stats['max'], value)
+                stats['sum'] += value
+                stats['count'] += 1
+    
+    def normalize_scores(self, scores_dict):
+        """归一化分数到[0,1]范围，使三个维度量级相同"""
+        normalized_scores = {}
+        
+        for score_type, value in scores_dict.items():
+            if score_type in self.score_stats:
+                stats = self.score_stats[score_type]
+                if stats['max'] > stats['min']:
+                    # Min-Max归一化到[0,1]
+                    normalized_value = (value - stats['min']) / (stats['max'] - stats['min'])
+                else:
+                    normalized_value = 0.5  # 如果max==min，设为中间值
+                normalized_scores[score_type] = normalized_value
+            else:
+                normalized_scores[score_type] = value
+                
+        return normalized_scores
+
     def calculate_composite_score(self, token_idx, current_hidden, prev_hidden, 
-                                self_attn_weights, cross_attn_weights, seq_len):
+                                self_attn_weights, cross_attn_weights, seq_len, layer_idx):
         """
-        计算综合评分：变化值 + 自注意力权重 + 跨模态注意力权重
+        计算归一化的综合评分：变化值 + 自注意力权重 + 跨模态注意力权重
         
         Args:
             token_idx: token索引
@@ -100,58 +137,78 @@ class AdaptiveTokenPruning:
             self_attn_weights: 自注意力权重
             cross_attn_weights: 跨模态注意力权重
             seq_len: 序列长度
+            layer_idx: 当前层索引
             
         Returns:
-            float: 综合重要性评分（越高越重要）
+            float: 归一化的综合重要性评分（0-1范围，越高越重要）
         """
-        scores = {}
+        raw_scores = {}
         
         # 1. Token变化分数（变化越大越重要）
         if prev_hidden is not None:
             change_magnitude = torch.norm(current_hidden - prev_hidden, dim=-1).item()
             relative_change = change_magnitude / (torch.norm(prev_hidden, dim=-1).item() + 1e-8)
-            scores['change'] = relative_change
+            raw_scores['change'] = relative_change
         else:
-            scores['change'] = 1.0  # 第一层默认高重要性
+            raw_scores['change'] = 1.0  # 第一层默认高重要性
         
         # 2. 自注意力分数（图像token间的重要性）
-        scores['self_attn'] = self.calculate_image_self_attention_score(
+        raw_scores['self_attn'] = self.calculate_image_self_attention_score(
             self_attn_weights, token_idx, seq_len)
         
         # 3. 跨模态注意力分数（与文本的关联性）
-        scores['cross_attn'] = self.calculate_image_cross_attention_score(
+        raw_scores['cross_attn'] = self.calculate_image_cross_attention_score(
             cross_attn_weights, token_idx)
         
-        # 4. 加权综合评分
+        # 4. 更新统计信息（前几层用于建立归一化基准）
+        if layer_idx <= self.start_layer + 5:  # 前几层收集统计信息
+            self.update_score_statistics(raw_scores)
+        
+        # 5. 归一化分数（使三个维度量级相同）
+        normalized_scores = self.normalize_scores(raw_scores)
+        
+        # 6. 加权综合评分（归一化后的分数）
         composite_score = (
-            self.change_weight * scores['change'] +
-            self.self_attn_weight * scores['self_attn'] + 
-            self.cross_attn_weight * scores['cross_attn']
+            self.change_weight * normalized_scores['change'] +
+            self.self_attn_weight * normalized_scores['self_attn'] + 
+            self.cross_attn_weight * normalized_scores['cross_attn']
         )
         
-        return composite_score, scores
+        return composite_score, raw_scores, normalized_scores
 
-    def should_prune_token(self, token_idx, current_hidden, prev_hidden, layer_idx,
-                          self_attn_weights=None, cross_attn_weights=None, seq_len=None):
+    def should_apply_pruning(self, layer_idx, expert_name):
         """
-        基于综合评分判断是否应该停止更新某个token
+        判断当前层是否应该应用token修剪
+        
+        Args:
+            layer_idx: 当前层索引
+            expert_name: 专家名称 ("high_noise" 或 "low_noise")
+            
+        Returns:
+            bool: 是否应该应用修剪
+        """
+        # 1. 只在高噪声专家中应用
+        if expert_name != "high_noise":
+            return False
+            
+        # 2. 只在指定层数范围内应用（渐进式修剪）
+        if layer_idx < self.start_layer or layer_idx > self.end_layer:
+            return False
+            
+        return True
+
+    def should_prune_token(self, token_idx, composite_score, layer_idx):
+        """
+        基于固定阈值判断是否应该修剪某个token（渐进式修剪）
         
         Args:
             token_idx: token索引
-            current_hidden: 当前层的hidden state
-            prev_hidden: 前一层的hidden state  
+            composite_score: 归一化的综合评分 (0-1范围)
             layer_idx: 当前层索引
-            self_attn_weights: 自注意力权重矩阵
-            cross_attn_weights: 跨模态注意力权重矩阵
-            seq_len: 序列长度
             
         Returns:
-            bool: 是否应该停止更新
+            bool: 是否应该修剪该token
         """
-        # 只在指定层数后开始修剪
-        if layer_idx < self.start_layer:
-            return False
-            
         # 已经冻结的token保持冻结
         if token_idx in self.frozen_tokens:
             return True
@@ -160,34 +217,9 @@ class AdaptiveTokenPruning:
         if self.text_token_start is not None and token_idx >= self.text_token_start:
             return False  # 文本token不修剪
             
-        # 计算综合重要性评分
-        if self_attn_weights is not None and seq_len is not None:
-            composite_score, detailed_scores = self.calculate_composite_score(
-                token_idx, current_hidden, prev_hidden,
-                self_attn_weights, cross_attn_weights, seq_len
-            )
-            
-            # 记录评分历史
-            if token_idx not in self.token_scores_history:
-                self.token_scores_history[token_idx] = []
-            self.token_scores_history[token_idx].append({
-                'layer': layer_idx,
-                'composite_score': composite_score,
-                'change_score': detailed_scores['change'],
-                'self_attn_score': detailed_scores['self_attn'],
-                'cross_attn_score': detailed_scores['cross_attn']
-            })
-            
-            # 综合评分低于阈值则修剪
-            return composite_score < self.change_threshold
-        else:
-            # 回退到简单的变化检测
-            if prev_hidden is not None:
-                change_magnitude = torch.norm(current_hidden - prev_hidden, dim=-1)
-                relative_change = change_magnitude / (torch.norm(prev_hidden, dim=-1) + 1e-8)
-                return relative_change < self.change_threshold
-                
-        return False
+        # 固定阈值修剪：评分低于阈值就修剪
+        # 这样随着推理进行，越来越多的token会被修剪
+        return composite_score < self.pruning_threshold
     
     def identify_structural_tokens(self, attention_weights, seq_len):
         """
@@ -210,20 +242,34 @@ class AdaptiveTokenPruning:
         
         return set(structural_indices.cpu().tolist())
     
-    def apply_pruning(self, hidden_states, self_attn_weights, cross_attn_weights, layer_idx):
+    def apply_progressive_pruning(self, hidden_states, self_attn_weights, cross_attn_weights, 
+                                layer_idx, expert_name):
         """
-        应用基于综合评分的token修剪
+        应用渐进式token修剪（只在高噪声专家中使用）
         
         Args:
             hidden_states: [B, L, C] 当前hidden states
             self_attn_weights: [B, H, L, L] 自注意力权重
             cross_attn_weights: [B, H, L, text_len] 跨模态注意力权重
             layer_idx: 当前层索引
+            expert_name: 专家名称
             
         Returns:
             tuple: (修剪后的hidden_states, 激活mask, 修剪统计)
         """
         B, L, C = hidden_states.shape
+        
+        # 检查是否应该应用修剪
+        if not self.should_apply_pruning(layer_idx, expert_name):
+            # 不修剪，返回全激活mask
+            active_mask = torch.ones(L, dtype=torch.bool, device=hidden_states.device)
+            pruning_stats = {
+                'layer': layer_idx,
+                'expert': expert_name,
+                'pruning_applied': False,
+                'reason': 'outside_pruning_range' if expert_name == "high_noise" else 'low_noise_expert'
+            }
+            return hidden_states, active_mask, pruning_stats
         
         # 创建激活mask
         active_mask = torch.ones(L, dtype=torch.bool, device=hidden_states.device)
@@ -233,71 +279,65 @@ class AdaptiveTokenPruning:
         
         # 计算所有图像token的综合评分
         token_scores = []
-        detailed_scores_list = []
+        raw_scores_list = []
+        normalized_scores_list = []
         
         image_token_end = self.text_token_start if self.text_token_start is not None else L
         
         for token_idx in range(self.image_token_start, image_token_end):
-            composite_score, detailed_scores = self.calculate_composite_score(
+            composite_score, raw_scores, normalized_scores = self.calculate_composite_score(
                 token_idx, 
                 hidden_states[0, token_idx],
                 prev_hidden[0, token_idx] if prev_hidden is not None else None,
-                self_attn_weights, cross_attn_weights, L
+                self_attn_weights, cross_attn_weights, L, layer_idx
             )
             token_scores.append((token_idx, composite_score))
-            detailed_scores_list.append(detailed_scores)
+            raw_scores_list.append(raw_scores)
+            normalized_scores_list.append(normalized_scores)
         
-        # 根据综合评分排序，保留重要的token
-        token_scores.sort(key=lambda x: x[1], reverse=True)  # 按评分降序
-        
-        # 计算需要保持激活的token数量
-        total_image_tokens = image_token_end - self.image_token_start
-        min_active_image_tokens = max(
-            int(total_image_tokens * self.min_active_ratio),
-            1  # 至少保持1个图像token激活
-        )
-        
-        # 修剪评分低的token
+        # 渐进式修剪：基于固定阈值，逐步增加修剪的token
         newly_frozen = []
         for i, (token_idx, score) in enumerate(token_scores):
-            # 已经冻结的保持冻结
-            if token_idx in self.frozen_tokens:
+            if self.should_prune_token(token_idx, score, layer_idx):
                 active_mask[token_idx] = False
-                continue
-                
-            # 保留top-k高评分token，修剪其余
-            if i >= min_active_image_tokens and score < self.change_threshold:
-                active_mask[token_idx] = False
-                self.frozen_tokens.add(token_idx)
-                newly_frozen.append(token_idx)
+                if token_idx not in self.frozen_tokens:
+                    self.frozen_tokens.add(token_idx)
+                    newly_frozen.append(token_idx)
         
-        # 记录评分历史
+        # 记录详细的评分历史
         for i, (token_idx, score) in enumerate(token_scores):
             if token_idx not in self.token_scores_history:
                 self.token_scores_history[token_idx] = []
             self.token_scores_history[token_idx].append({
                 'layer': layer_idx,
+                'expert': expert_name,
                 'composite_score': score,
-                'rank': i + 1,
                 'is_active': active_mask[token_idx].item(),
-                **detailed_scores_list[i]
+                'raw_scores': raw_scores_list[i],
+                'normalized_scores': normalized_scores_list[i]
             })
         
         # 保存当前状态
         self.token_states[layer_idx] = hidden_states.clone()
         
         # 修剪统计
+        total_image_tokens = image_token_end - self.image_token_start
+        active_image_tokens = active_mask[self.image_token_start:image_token_end].sum().item()
+        
         pruning_stats = {
             'layer': layer_idx,
+            'expert': expert_name,
+            'pruning_applied': True,
             'total_tokens': L,
             'image_tokens': total_image_tokens,
-            'active_image_tokens': active_mask[self.image_token_start:image_token_end].sum().item(),
-            'pruned_image_tokens': total_image_tokens - active_mask[self.image_token_start:image_token_end].sum().item(),
+            'active_image_tokens': active_image_tokens,
+            'pruned_image_tokens': total_image_tokens - active_image_tokens,
             'newly_frozen': len(newly_frozen),
-            'image_pruning_ratio': (total_image_tokens - active_mask[self.image_token_start:image_token_end].sum().item()) / total_image_tokens,
-            'avg_change_score': sum(scores['change'] for scores in detailed_scores_list) / len(detailed_scores_list),
-            'avg_self_attn_score': sum(scores['self_attn'] for scores in detailed_scores_list) / len(detailed_scores_list),
-            'avg_cross_attn_score': sum(scores['cross_attn'] for scores in detailed_scores_list) / len(detailed_scores_list)
+            'cumulative_frozen': len(self.frozen_tokens),
+            'image_pruning_ratio': (total_image_tokens - active_image_tokens) / total_image_tokens,
+            'pruning_threshold': self.pruning_threshold,
+            'avg_composite_score': sum(score for _, score in token_scores) / len(token_scores),
+            'score_stats': dict(self.score_stats)  # 当前归一化统计
         }
         
         return hidden_states, active_mask, pruning_stats
