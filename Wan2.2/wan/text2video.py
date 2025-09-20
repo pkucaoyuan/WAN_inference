@@ -454,11 +454,18 @@ class WanT2V:
                         if step_idx > 0:  # 需要前一步的latents来计算变化
                             prev_latents = getattr(self, '_prev_latents', None)
                             if prev_latents is not None:
-                                # 计算token变化（更稳定的相对变化计算）
-                                change_magnitude = torch.norm(latents[0] - prev_latents, dim=-1)
-                                prev_magnitude = torch.norm(prev_latents, dim=-1)
+                                # 计算token变化（修复维度问题）
+                                # latents[0]形状: [C, F, H, W] = [16, 1, 90, 160]
+                                # 沿着通道维度计算变化
+                                change_magnitude = torch.norm(latents[0] - prev_latents, dim=0)  # 结果: [F, H, W]
+                                prev_magnitude = torch.norm(prev_latents, dim=0)  # 结果: [F, H, W]
                                 # 使用更大的epsilon和clamp确保数值稳定性
                                 relative_change = change_magnitude / torch.clamp(prev_magnitude, min=1e-6)
+                                
+                                if self.rank == 0:
+                                    print(f"   🔍 变化计算调试:")
+                                    print(f"      📐 change_magnitude形状: {change_magnitude.shape}")
+                                    print(f"      📐 relative_change形状: {relative_change.shape}")
                                 
                                 # 更新变化分数统计（基于真实token数量）
                                 C, F, H, W = latents[0].shape
@@ -474,19 +481,16 @@ class WanT2V:
                                     print(f"   📊 相对变化形状: {relative_change.shape}")
                                     print(f"   📏 变化计算维度: {len(relative_change.shape)}D")
                                 
-                                # 第5步收集所有token的变化信息（与第6步逻辑完全一致）
+                                # 第5步收集所有token的变化信息（修复维度匹配）
                                 all_token_changes = []
-                                # 按patch_size分组计算平均变化 (与第6步完全相同的逻辑)
+                                # relative_change形状现在是 [F, H, W]
                                 for f in range(F):
                                     for h in range(0, H, patch_size[1]):
                                         for w in range(0, W, patch_size[2]):
                                             h_end = min(h + patch_size[1], H)
                                             w_end = min(w + patch_size[2], W)
-                                            # 计算这个patch的平均变化
-                                            if len(relative_change.shape) == 3:  # [C, H, W]
-                                                patch_change = relative_change[:, h:h_end, w:w_end].mean()
-                                            else:  # [H, W]
-                                                patch_change = relative_change[h:h_end, w:w_end].mean()
+                                            # 计算这个patch的平均变化 - 正确的维度索引
+                                            patch_change = relative_change[f, h:h_end, w:w_end].mean()
                                             all_token_changes.append(patch_change.item())
                                             if not torch.isnan(patch_change) and not torch.isinf(patch_change):
                                                 token_pruner.update_change_score_statistics(patch_change.item())
@@ -533,9 +537,11 @@ class WanT2V:
                     elif token_pruner.should_apply_pruning(step_idx, expert_name):
                         prev_latents = getattr(self, '_prev_latents', None)
                         if prev_latents is not None and token_pruner.dynamic_threshold is not None:
-                            # 计算真实的token变化幅度（更稳定的相对变化计算）
-                            change_magnitude = torch.norm(latents[0] - prev_latents, dim=-1)
-                            prev_magnitude = torch.norm(prev_latents, dim=-1)
+                            # 计算真实的token变化幅度（修复维度问题）
+                            # latents[0]形状: [C, F, H, W] = [16, 1, 90, 160]
+                            # 沿着通道维度计算变化
+                            change_magnitude = torch.norm(latents[0] - prev_latents, dim=0)  # 结果: [F, H, W]
+                            prev_magnitude = torch.norm(prev_latents, dim=0)  # 结果: [F, H, W]
                             # 使用更大的epsilon和clamp确保数值稳定性
                             relative_change = change_magnitude / torch.clamp(prev_magnitude, min=1e-6)
                             
@@ -552,19 +558,16 @@ class WanT2V:
                                 print(f"   🧮 Token数量计算: {F} * ({H}//{patch_size[1]}) * ({W}//{patch_size[2]}) = {actual_token_count}")
                                 print(f"   📊 相对变化形状: {relative_change.shape}, 维度: {len(relative_change.shape)}D")
                             
-                            # 计算每个token位置的变化（与第5步逻辑完全一致）
+                            # 计算每个token位置的变化（修复维度匹配）
                             token_changes = []
-                            # 按patch_size分组计算平均变化 (与第5步完全相同的逻辑)
+                            # relative_change形状现在是 [F, H, W]
                             for f in range(F):
                                 for h in range(0, H, patch_size[1]):
                                     for w in range(0, W, patch_size[2]):
                                         h_end = min(h + patch_size[1], H)
                                         w_end = min(w + patch_size[2], W)
-                                        # 计算这个patch的平均变化
-                                        if len(relative_change.shape) == 3:  # [C, H, W]
-                                            patch_change = relative_change[:, h:h_end, w:w_end].mean()
-                                        else:  # [H, W]
-                                            patch_change = relative_change[h:h_end, w:w_end].mean()
+                                        # 计算这个patch的平均变化 - 正确的维度索引
+                                        patch_change = relative_change[f, h:h_end, w:w_end].mean()
                                         token_changes.append(patch_change)
                             token_changes = torch.stack(token_changes)
                             
