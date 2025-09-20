@@ -378,7 +378,8 @@ class WanAttentionBlock(nn.Module):
         if self._frozen_qkv_cache and self._frozen_qkv_cache['valid']:
             # 计算激活token的Q,K,V
             x_active = x_norm[:, active_indices, :]
-            b, s_active, n, d = x_active.size(0), len(active_indices), self.num_heads, self.head_dim
+            b, s_active = x_active.size(0), len(active_indices)
+            n, d = self.self_attn.num_heads, self.self_attn.head_dim
             
             q_active = self.self_attn.norm_q(self.self_attn.q(x_active)).view(b, s_active, n, d)
             k_active = self.self_attn.norm_k(self.self_attn.k(x_active)).view(b, s_active, n, d)

@@ -463,44 +463,57 @@ class WanT2V:
                                 patch_size = (1, 2, 2)
                                 actual_token_count = F * (H // patch_size[1]) * (W // patch_size[2])
                                 
-                                # 计算真实的token级别变化
-                                for f in range(F):
-                                    for h in range(0, H, patch_size[1]):
-                                        for w in range(0, W, patch_size[2]):
-                                            h_end = min(h + patch_size[1], H)
-                                            w_end = min(w + patch_size[2], W)
-                                            # 计算这个patch的真实变化
-                                            patch_change = relative_change[:, h:h_end, w:w_end].mean()
-                                            if not torch.isnan(patch_change) and not torch.isinf(patch_change):
-                                                token_pruner.update_change_score_statistics(patch_change.item())
+                                if self.rank == 0:
+                                    print(f"🔍 Latent形状调试: C={C}, F={F}, H={H}, W={W}")
+                                    print(f"🔍 计算token数量: {F} * ({H}//{patch_size[1]}) * ({W}//{patch_size[2]}) = {actual_token_count}")
+                                    print(f"🔍 相对变化形状: {relative_change.shape}")
+                                
+                                # 第5步收集所有token的变化信息（与第6步逻辑保持一致）
+                                all_token_changes = []
+                                if len(relative_change.shape) == 3:  # [C, H, W]
+                                    # 按patch_size分组计算平均变化
+                                    for f in range(F):
+                                        for h in range(0, H, patch_size[1]):
+                                            for w in range(0, W, patch_size[2]):
+                                                h_end = min(h + patch_size[1], H)
+                                                w_end = min(w + patch_size[2], W)
+                                                # 计算这个patch的平均变化
+                                                patch_change = relative_change[:, h:h_end, w:w_end].mean()
+                                                all_token_changes.append(patch_change.item())
+                                                if not torch.isnan(patch_change) and not torch.isinf(patch_change):
+                                                    token_pruner.update_change_score_statistics(patch_change.item())
+                                else:
+                                    # 如果维度不匹配，使用flatten后的前N个值
+                                    token_changes_flat = relative_change.flatten()[:actual_token_count]
+                                    for change_val in token_changes_flat:
+                                        all_token_changes.append(change_val.item())
+                                        if not torch.isnan(change_val) and not torch.isinf(change_val):
+                                            token_pruner.update_change_score_statistics(change_val.item())
                                 
                                 if self.rank == 0:
-                                    print(f"📊 Step {step_idx+1} 收集所有token信息: {token_pruner.change_score_stats['count']} 个token变化值")
+                                    print(f"📊 Step {step_idx+1} 收集所有token信息: {len(all_token_changes)} 个token变化值")
+                                
+                                # 基于第5步的所有token变化计算动态阈值
+                                if len(all_token_changes) > 0:
+                                    import numpy as np
+                                    # 过滤掉无效值
+                                    valid_changes = [v for v in all_token_changes if not (np.isnan(v) or np.isinf(v))]
+                                    if len(valid_changes) > 0:
+                                        token_pruner.baseline_scores = valid_changes
+                                        token_pruner.dynamic_threshold = token_pruner.calculate_dynamic_threshold()
+                                        
+                                        if self.rank == 0:
+                                            print(f"🎯 动态阈值已确定: {token_pruner.dynamic_threshold:.4f} (第{token_pruner.percentile_threshold}百分位数)")
+                                            print(f"   📊 基于{len(valid_changes)}个token变化值计算")
+                                            print(f"   📈 变化范围: {min(valid_changes):.4f} - {max(valid_changes):.4f}")
+                                    else:
+                                        if self.rank == 0:
+                                            print(f"⚠️ 第5步未收集到有效的变化值，使用默认阈值")
+                                        token_pruner.dynamic_threshold = 0.01  # 默认阈值
                         
                         # 保存当前latents用于下一步比较
                         self._prev_latents = latents[0].clone()
                         
-                        # 基准期结束时计算动态阈值（第5步结束后）
-                        if step_idx == token_pruner.baseline_steps - 1:
-                            # 基于真实变化统计计算动态阈值
-                            stats = token_pruner.change_score_stats
-                            if stats['count'] > 0 and len(stats['values']) > 0:
-                                # 过滤掉无效值
-                                import numpy as np
-                                valid_values = [v for v in stats['values'] if not (np.isnan(v) or np.isinf(v))]
-                                
-                                if len(valid_values) > 0:
-                                    token_pruner.baseline_scores = valid_values
-                                    token_pruner.dynamic_threshold = token_pruner.calculate_dynamic_threshold()
-                                    
-                                    if self.rank == 0:
-                                        print(f"🎯 动态阈值已确定: {token_pruner.dynamic_threshold:.4f} (第{token_pruner.percentile_threshold}百分位数)")
-                                        print(f"   📊 基于{len(valid_values)}个有效token变化值计算")
-                                        print(f"   📈 变化范围: {min(valid_values):.4f} - {max(valid_values):.4f}")
-                                else:
-                                    if self.rank == 0:
-                                        print(f"⚠️ 基准期未收集到有效的变化值，使用默认阈值")
-                                    token_pruner.dynamic_threshold = 0.01  # 默认阈值
                     
                     # 应用token裁剪（基于真实latent变化）- 从第6步开始
                     elif token_pruner.should_apply_pruning(step_idx, expert_name):
@@ -516,6 +529,10 @@ class WanT2V:
                             C, F, H, W = latents[0].shape
                             patch_size = (1, 2, 2)  # 从模型配置获取
                             actual_token_count = F * (H // patch_size[1]) * (W // patch_size[2])
+                            
+                            if self.rank == 0:
+                                print(f"🔍 Step {step_idx+1} Latent形状: C={C}, F={F}, H={H}, W={W}")
+                                print(f"🔍 计算token数量: {actual_token_count}, 相对变化形状: {relative_change.shape}")
                             
                             # 计算每个token位置的变化（基于空间位置）
                             # 将latent变化映射到token级别
