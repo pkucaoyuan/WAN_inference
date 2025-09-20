@@ -273,13 +273,26 @@ class WanAttentionBlock(nn.Module):
                 # 计算激活token的归一化输入
                 x_norm = self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
                 
-                # 检查是否有缓存的冻结token QKV且冻结token集合匹配
-                cache_valid = (hasattr(self, '_frozen_qkv_cache') and 
-                              self._frozen_qkv_cache and 
-                              len(frozen_indices) > 0 and
-                              self._frozen_qkv_cache['valid'] and
-                              len(self._frozen_qkv_cache['frozen_indices']) == len(frozen_indices) and
-                              torch.equal(self._frozen_qkv_cache['frozen_indices'], frozen_indices))
+                # 检查QKV缓存：缓存的冻结token是否仍在当前冻结集合中
+                cache_valid = False
+                if (hasattr(self, '_frozen_qkv_cache') and 
+                    self._frozen_qkv_cache and 
+                    len(frozen_indices) > 0 and
+                    self._frozen_qkv_cache['valid']):
+                    
+                    cached_indices = self._frozen_qkv_cache['frozen_indices']
+                    # 检查缓存的token是否都仍然被冻结（允许新增冻结token）
+                    cached_still_frozen = torch.isin(cached_indices, frozen_indices).all()
+                    cache_valid = cached_still_frozen.item()
+                    
+                    if cache_valid:
+                        print(f"   🔄 QKV缓存有效: {len(cached_indices)}个token复用")
+                    else:
+                        if hasattr(self, '_frozen_qkv_cache') and self._frozen_qkv_cache:
+                            cached_indices = self._frozen_qkv_cache['frozen_indices']
+                            print(f"   ❌ QKV缓存失效: 缓存{len(cached_indices)}个 vs 当前{len(frozen_indices)}个")
+                        else:
+                            print(f"   ❌ QKV缓存失效: 无缓存数据")
                 
                 if cache_valid:
                     # 使用QKV缓存的混合attention计算
@@ -288,10 +301,9 @@ class WanAttentionBlock(nn.Module):
                     # 简化QKV缓存输出
                     pass  # QKV缓存命中，无需输出
                 else:
-                    # 缓存无效或冻结token集合变化，完整计算
-                    y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
-                    # 移除QKV缓存失效的输出，减少终端噪音
-                    pass
+                    # ✅ 正确的CAT算法：所有token参与attention，只更新激活token
+                    y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)  # 所有token参与
+                    # Self-Attention不能节省计算，因为激活token需要attend到冻结token
                 
                 # 缓存当前的Q,K,V用于下一步（基于预测的冻结token）
                 self._cache_frozen_qkv(x_norm, frozen_indices, seq_lens, grid_sizes, freqs)
@@ -322,6 +334,7 @@ class WanAttentionBlock(nn.Module):
                                        for e_elem in e)
                     ffn_input = self.norm2(x_active).float() * (1 + e_ffn_active[4].squeeze(2)) + e_ffn_active[3].squeeze(2)
                     ffn_out = self.ffn(ffn_input)  # 🔥 只计算激活token的FFN
+                    print(f"   ⚡ FFN节省: 只计算{len(active_indices)}/{x.size(1)}token ({100*len(active_indices)/x.size(1):.1f}%)")
                     
                     with torch.amp.autocast('cuda', dtype=torch.float32):
                         x_active = x_active + ffn_out * e_ffn_active[5].squeeze(2)
