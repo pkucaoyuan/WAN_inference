@@ -696,21 +696,23 @@ class WanT2V:
                             threshold_tensor = torch.tensor(token_pruner.dynamic_threshold, 
                                                           device=token_changes.device, dtype=token_changes.dtype)
                             
-                            # 累积式冻结逻辑：已冻结的token保持冻结，新的低变化token加入冻结
+                            # 正确的累积冻结逻辑：冻结token保持冻结，只评估激活token
                             # 获取当前已冻结的token集合
                             current_frozen_set = set()
                             if hasattr(self, '_next_step_frozen_indices'):
                                 current_frozen_set = set(self._next_step_frozen_indices.cpu().tolist())
                             
-                            # 基于变化分数找出新的候选冻结token
-                            new_frozen_mask = token_changes < threshold_tensor  # [3600] boolean tensor
-                            new_frozen_candidates = torch.where(new_frozen_mask)[0]
+                            # 只对当前激活的token评估变化，冻结token自动保持冻结
+                            current_active_indices = [i for i in range(len(token_changes)) if i not in current_frozen_set]
                             
-                            # 合并：已冻结 + 新冻结候选
-                            all_frozen_indices = list(current_frozen_set)
-                            for idx in new_frozen_candidates.cpu().tolist():
-                                if idx not in current_frozen_set:
-                                    all_frozen_indices.append(idx)
+                            # 评估激活token中哪些变化小于阈值，将其加入冻结
+                            new_frozen_candidates = []
+                            for idx in current_active_indices:
+                                if token_changes[idx].item() < token_pruner.dynamic_threshold:
+                                    new_frozen_candidates.append(idx)
+                            
+                            # 合并：已冻结token + 新冻结的激活token
+                            all_frozen_indices = list(current_frozen_set) + new_frozen_candidates
                             
                             # 生成最终的冻结和激活索引
                             next_step_frozen_indices = torch.tensor(all_frozen_indices, device=token_changes.device)
@@ -719,6 +721,13 @@ class WanT2V:
                             if len(all_frozen_indices) > 0:
                                 active_mask[all_frozen_indices] = False
                             next_step_active_indices = torch.where(active_mask)[0]
+                            
+                            if self.rank == 0:
+                                print(f"   🔍 累积冻结分析:")
+                                print(f"      🧊 之前已冻结: {len(current_frozen_set)} 个token")
+                                print(f"      📊 当前激活评估: {len(current_active_indices)} 个token")
+                                print(f"      ❄️ 新增冻结: {len(new_frozen_candidates)} 个token")
+                                print(f"      🎯 累积冻结总数: {len(all_frozen_indices)} 个token")
                             
                             # 确保下一步至少有一些token保持激活
                             if len(next_step_active_indices) == 0:
