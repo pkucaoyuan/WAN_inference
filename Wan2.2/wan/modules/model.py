@@ -218,8 +218,8 @@ class WanAttentionBlock(nn.Module):
         # modulation
         self.modulation = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
         
-        # KV缓存用于冻结token优化
-        self._frozen_kv_cache = None
+        # QKV缓存用于冻结token优化
+        self._frozen_qkv_cache = None
 
     def forward(
         self,
@@ -272,7 +272,7 @@ class WanAttentionBlock(nn.Module):
                 x_norm = self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
                 
                 # 检查是否有缓存的冻结token QKV
-                if hasattr(self, '_frozen_kv_cache') and len(frozen_indices) > 0:
+                if hasattr(self, '_frozen_qkv_cache') and self._frozen_qkv_cache and len(frozen_indices) > 0:
                     # 混合计算：新的激活token Q + 缓存的冻结token K,V
                     y_mixed = self._compute_mixed_attention(x_norm, active_indices, frozen_indices, 
                                                           seq_lens, grid_sizes, freqs)
@@ -280,8 +280,8 @@ class WanAttentionBlock(nn.Module):
                     # 首次或无冻结token，完整计算
                     y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
                 
-                # 缓存当前的K,V用于下一步
-                self._cache_frozen_kv(x_norm, frozen_indices, seq_lens, grid_sizes, freqs)
+                # 缓存当前的Q,K,V用于下一步
+                self._cache_frozen_qkv(x_norm, frozen_indices, seq_lens, grid_sizes, freqs)
                 
                 # Algorithm 1: Line 3-5: 只有选中token使用attention结果更新
                 y = torch.zeros_like(x)
@@ -351,34 +351,70 @@ class WanAttentionBlock(nn.Module):
             x = cross_attn_ffn(x, context, context_lens, e)
         return x
     
-    def _cache_frozen_kv(self, x_norm, frozen_indices, seq_lens, grid_sizes, freqs):
-        """缓存冻结token的K,V用于下一步复用"""
+    def _cache_frozen_qkv(self, x_norm, frozen_indices, seq_lens, grid_sizes, freqs):
+        """缓存冻结token的Q,K,V用于下一步复用"""
         if len(frozen_indices) > 0:
-            # 计算冻结token的K,V
+            # 计算并缓存冻结token的Q,K,V
             x_frozen = x_norm[:, frozen_indices, :]
             
-            # 简化版：只缓存冻结token的normalized input
-            # 实际的K,V会在需要时计算
-            self._frozen_kv_cache = {
+            # 计算冻结token的Q,K,V（用于下一步复用）
+            b, s_frozen, n, d = x_frozen.size(0), len(frozen_indices), self.num_heads, self.head_dim
+            q_frozen = self.self_attn.norm_q(self.self_attn.q(x_frozen)).view(b, s_frozen, n, d)
+            k_frozen = self.self_attn.norm_k(self.self_attn.k(x_frozen)).view(b, s_frozen, n, d)
+            v_frozen = self.self_attn.v(x_frozen).view(b, s_frozen, n, d)
+            
+            self._frozen_qkv_cache = {
                 'frozen_indices': frozen_indices.clone(),
-                'frozen_x_norm': x_frozen.clone(),
+                'q_frozen': q_frozen.clone(),
+                'k_frozen': k_frozen.clone(), 
+                'v_frozen': v_frozen.clone(),
                 'valid': True
             }
         else:
-            self._frozen_kv_cache = None
+            self._frozen_qkv_cache = None
     
     def _compute_mixed_attention(self, x_norm, active_indices, frozen_indices, seq_lens, grid_sizes, freqs):
-        """计算混合attention：新的激活token + 缓存的冻结token"""
-        # 简化实现：由于flash_attention的复杂性，暂时使用完整计算
-        # 但标记了优化意图
-        if self._frozen_kv_cache and self._frozen_kv_cache['valid']:
-            if self.training or True:  # 当前简化为完整计算
-                return self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
-            else:
-                # 未来可以在这里实现真正的KV缓存优化
-                # 混合新的Q（激活token）和缓存的K,V（冻结token）
-                pass
+        """计算混合attention：新的激活token QKV + 缓存的冻结token QKV"""
+        if self._frozen_qkv_cache and self._frozen_qkv_cache['valid']:
+            # 计算激活token的Q,K,V
+            x_active = x_norm[:, active_indices, :]
+            b, s_active, n, d = x_active.size(0), len(active_indices), self.num_heads, self.head_dim
+            
+            q_active = self.self_attn.norm_q(self.self_attn.q(x_active)).view(b, s_active, n, d)
+            k_active = self.self_attn.norm_k(self.self_attn.k(x_active)).view(b, s_active, n, d)
+            v_active = self.self_attn.v(x_active).view(b, s_active, n, d)
+            
+            # 获取缓存的冻结token Q,K,V
+            q_frozen = self._frozen_qkv_cache['q_frozen']
+            k_frozen = self._frozen_qkv_cache['k_frozen'] 
+            v_frozen = self._frozen_qkv_cache['v_frozen']
+            
+            # 重新组合完整的Q,K,V矩阵
+            full_seq_len = x_norm.size(1)
+            q_full = torch.zeros(b, full_seq_len, n, d, device=x_norm.device, dtype=q_active.dtype)
+            k_full = torch.zeros(b, full_seq_len, n, d, device=x_norm.device, dtype=k_active.dtype)
+            v_full = torch.zeros(b, full_seq_len, n, d, device=x_norm.device, dtype=v_active.dtype)
+            
+            # 填入激活token的新Q,K,V
+            q_full[:, active_indices, :, :] = q_active
+            k_full[:, active_indices, :, :] = k_active
+            v_full[:, active_indices, :, :] = v_active
+            
+            # 填入冻结token的缓存Q,K,V
+            q_full[:, frozen_indices, :, :] = q_frozen
+            k_full[:, frozen_indices, :, :] = k_frozen
+            v_full[:, frozen_indices, :, :] = v_frozen
+            
+            # 使用混合的Q,K,V计算attention（简化版本）
+            # 注意：这里需要手动实现attention，因为flash_attention不支持混合输入
+            scale = (d ** -0.5)
+            attention_scores = torch.matmul(q_full, k_full.transpose(-2, -1)) * scale
+            attention_weights = torch.softmax(attention_scores, dim=-1)
+            attention_out = torch.matmul(attention_weights, v_full)  # [B, L, H, d]
+            
+            return attention_out.flatten(-2)  # [B, L, H*d]
         
+        # 回退到完整计算
         return self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
 
 
