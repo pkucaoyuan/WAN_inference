@@ -234,31 +234,6 @@ def _parse_args():
         action="store_true",
         default=False,
         help="Whether to convert model paramerters dtype.")
-    parser.add_argument(
-        "--enable_token_pruning",
-        action="store_true",
-        default=False,
-        help="Enable adaptive token pruning to reduce computation in high-noise expert.")
-    parser.add_argument(
-        "--pruning_threshold",
-        type=int,
-        default=20,
-        help="Percentile threshold for token pruning (10-30, lower=less pruning, higher=more pruning).")
-    parser.add_argument(
-        "--pruning_baseline_steps",
-        type=int,
-        default=5,
-        help="Number of baseline steps for establishing pruning threshold (3-8).")
-    parser.add_argument(
-        "--pruning_start_layer",
-        type=int,
-        default=6,
-        help="Layer to start token pruning (after baseline steps).")
-    parser.add_argument(
-        "--pruning_end_layer",
-        type=int,
-        default=999,
-        help="Layer to end token pruning (will be automatically limited to high-noise expert end step).")
 
     # following args only works for s2v
     parser.add_argument(
@@ -494,11 +469,7 @@ def generate(args):
             cfg_truncate_steps=args.cfg_truncate_steps,
             cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps,
             output_dir=str(run_folder),
-            enable_token_pruning=args.enable_token_pruning,
-            pruning_threshold=args.pruning_threshold,
-            pruning_baseline_steps=args.pruning_baseline_steps,
-            pruning_start_layer=args.pruning_start_layer,
-            pruning_end_layer=args.pruning_end_layer)
+)
         total_inference_time = time.time() - inference_start
         
         # 提取时间信息
@@ -648,11 +619,6 @@ def generate(args):
                 "模型卸载": args.offload_model,
                 "T5_CPU": args.t5_cpu,
                 "数据类型转换": args.convert_model_dtype,
-                "Token裁剪": args.enable_token_pruning,
-                "裁剪阈值百分位": args.pruning_threshold if args.enable_token_pruning else "未启用",
-                "基准步数": args.pruning_baseline_steps if args.enable_token_pruning else "未启用",
-                "裁剪起始层": args.pruning_start_layer if args.enable_token_pruning else "未启用",
-                "裁剪结束层": args.pruning_end_layer if args.enable_token_pruning else "未启用"
             },
             "分布式设置": {
                 "多GPU": dist.is_initialized() if 'dist' in globals() else False,
