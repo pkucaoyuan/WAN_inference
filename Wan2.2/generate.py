@@ -234,6 +234,11 @@ def _parse_args():
         action="store_true",
         default=False,
         help="Whether to convert model paramerters dtype.")
+    parser.add_argument(
+        "--enable_frame_interpolation",
+        action="store_true",
+        default=False,
+        help="Enable frame interpolation: high-noise expert generates half frames, then interpolate to full frames for low-noise expert.")
 
     # following args only works for s2v
     parser.add_argument(
@@ -469,12 +474,16 @@ def generate(args):
             cfg_truncate_steps=args.cfg_truncate_steps,
             cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps,
             output_dir=str(run_folder),
+            enable_frame_interpolation=args.enable_frame_interpolation,
 )
         total_inference_time = time.time() - inference_start
         
         # 提取时间信息
         total_switch_time = timing_info.get('total_switch_time', 0.0)
         step_timings = timing_info.get('step_timings', [])
+        frame_interpolation = timing_info.get('frame_interpolation', False)
+        original_frame_num = timing_info.get('original_frame_num', args.frame_num)
+        final_frame_num = timing_info.get('final_frame_num', args.frame_num)
         
         pure_inference_time = total_inference_time - total_switch_time
         
@@ -483,6 +492,10 @@ def generate(args):
             print(f"⚡ 纯推理耗时: {pure_inference_time:.2f}秒")
             print(f"📊 总推理耗时: {total_inference_time:.2f}秒")
             print(f"📈 推理速度: {args.sample_steps/pure_inference_time:.3f} 步/秒")
+            
+            if frame_interpolation:
+                print(f"🎞️ 帧插值模式: {original_frame_num}帧 → {final_frame_num}帧")
+                print(f"⚡ 高噪声专家加速: 50% (生成一半帧数)")
             print(f"📈 每步耗时: {pure_inference_time/args.sample_steps:.3f} 秒/步")
             if args.frame_num > 1:
                 print(f"🎬 帧生成效率: {args.frame_num/pure_inference_time:.3f} 帧/秒")
@@ -619,6 +632,7 @@ def generate(args):
                 "模型卸载": args.offload_model,
                 "T5_CPU": args.t5_cpu,
                 "数据类型转换": args.convert_model_dtype,
+                "帧插值": args.enable_frame_interpolation,
             },
             "分布式设置": {
                 "多GPU": dist.is_initialized() if 'dist' in globals() else False,

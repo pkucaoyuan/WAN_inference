@@ -19,13 +19,13 @@ from .utils.flow_solver import UniPCScheduler
 
 class WanT2V(nn.Module):
     def __init__(self,
-                 config,
+        config,
                  t5_model: T5EncoderModel = None,
                  vae: WanVAE = None,
                  dit: WanModel = None,
                  t5_tokenizer: T5Tokenizer = None,
                  device="cuda",
-                 rank=0,
+        rank=0,
                  dtype=torch.bfloat16):
         super().__init__()
         self.rank = rank
@@ -99,6 +99,50 @@ class WanT2V(nn.Module):
         
         return getattr(self.dit, expert_name)
 
+    def _interpolate_frames(self, latents, target_frame_num):
+        """
+        通过复制帧来插值，将latent从一半帧数扩展到目标帧数
+
+        Args:
+            latents: [C, F, H, W] 其中F是当前帧数（一半）
+            target_frame_num: 目标帧数（完整帧数）
+
+        Returns:
+            interpolated_latents: [C, target_frame_num, H, W]
+        """
+        C, F, H, W = latents.shape
+        current_frame_num = F
+        
+        if current_frame_num >= target_frame_num:
+            # 如果当前帧数已经足够，直接返回
+            return latents
+        
+        # 计算插值比例
+        scale_factor = target_frame_num / current_frame_num
+        
+        if self.rank == 0:
+            print(f"   📊 插值参数: {current_frame_num}帧 → {target_frame_num}帧 (缩放因子: {scale_factor:.2f})")
+        
+        # 使用torch.nn.functional.interpolate进行时间维度的插值
+        # 将latent重新排列为 [C*H*W, F] 然后插值
+        latents_reshaped = latents.view(C * H * W, F)
+        
+        # 在时间维度上进行线性插值
+        interpolated = F.interpolate(
+            latents_reshaped.unsqueeze(0).unsqueeze(0),  # [1, 1, C*H*W, F]
+            size=target_frame_num,
+            mode='linear',
+            align_corners=False
+        )
+        
+        # 恢复原始形状
+        interpolated_latents = interpolated.squeeze(0).squeeze(0).view(C, target_frame_num, H, W)
+        
+        if self.rank == 0:
+            print(f"   ✅ 帧插值完成: {latents.shape} → {interpolated_latents.shape}")
+        
+        return interpolated_latents
+
     def generate(self,
                  input_prompt,
                  frame_num=81,
@@ -108,6 +152,7 @@ class WanT2V(nn.Module):
                  cfg_truncate_steps=5,
                  cfg_truncate_high_noise_steps=3,
                  output_dir=None,
+                 enable_frame_interpolation=False,
 ):
         r"""
         Generates video frames from text prompt using diffusion process.
@@ -143,11 +188,26 @@ class WanT2V(nn.Module):
             input_prompt, self.t5_tokenizer, self.t5_model, self.device, self.dtype
         )
         
-        # Initialize noise
+        # Initialize noise with frame interpolation support
         height, width = image_size
         latent_height = height // 8
         latent_width = width // 8
-        noise_shape = (16, frame_num, latent_height, latent_width)
+        
+        # 如果启用帧插值，第一个专家只生成一半帧数
+        if enable_frame_interpolation:
+            # 确保帧数是偶数，便于插值
+            if frame_num % 2 != 0:
+                frame_num += 1
+                if self.rank == 0:
+                    print(f"🔧 帧插值模式：调整帧数从{frame_num-1}到{frame_num}（确保偶数）")
+            
+            # 第一个专家生成一半帧数
+            high_noise_frame_num = frame_num // 2
+            noise_shape = (16, high_noise_frame_num, latent_height, latent_width)
+            if self.rank == 0:
+                print(f"🎬 帧插值模式：高噪声专家生成{high_noise_frame_num}帧，低噪声专家处理{frame_num}帧")
+        else:
+            noise_shape = (16, frame_num, latent_height, latent_width)
         
         if seed != -1:
             seed_g = torch.Generator(device=self.device).manual_seed(seed)
@@ -166,22 +226,22 @@ class WanT2V(nn.Module):
             sample_guide_scale_start, sample_guide_scale_end = self.config['sample_guide_scale']
             sample_guide_scale = sample_guide_scale_start
             scale_step = (sample_guide_scale_end - sample_guide_scale_start) / len(timesteps)
-        else:
+            else:
             sample_guide_scale = self.config['sample_guide_scale']
             scale_step = 0
 
-        # sample videos
-        latents = noise
+            # sample videos
+            latents = noise
 
-        arg_c = {'context': context, 'seq_len': seq_len}
-        arg_null = {'context': context_null, 'seq_len': seq_len}
+            arg_c = {'context': context, 'seq_len': seq_len}
+            arg_null = {'context': context_null, 'seq_len': seq_len}
 
 
         import time
         for step_idx, t in enumerate(tqdm(timesteps)):
             step_start_time = time.time()  # 记录每步开始时间
-            latent_model_input = latents
-            timestep = [t]
+                latent_model_input = latents
+                timestep = [t]
 
             # Update sample guide scale
             if scale_step != 0:
@@ -218,14 +278,14 @@ class WanT2V(nn.Module):
 
                 noise_pred = noise_pred_uncond + sample_guide_scale * (
                     noise_pred_cond - noise_pred_uncond)
-            temp_x0 = sample_scheduler.step(
-                noise_pred.unsqueeze(0),
-                t,
-                latents[0].unsqueeze(0),
-                return_dict=False,
-                generator=seed_g)[0]
-            latents = [temp_x0.squeeze(0)]
-            
+                temp_x0 = sample_scheduler.step(
+                    noise_pred.unsqueeze(0),
+                    t,
+                    latents[0].unsqueeze(0),
+                    return_dict=False,
+                    generator=seed_g)[0]
+                latents = [temp_x0.squeeze(0)]
+
             # 记录每步推理时间
             step_end_time = time.time()
             step_duration = step_end_time - step_start_time
@@ -237,14 +297,25 @@ class WanT2V(nn.Module):
             }
             self.step_timings.append(step_timing)
         
+        # 帧插值处理
+        if enable_frame_interpolation:
+            if self.rank == 0:
+                print(f"🔄 执行帧插值：从{latents[0].shape[1]}帧扩展到{frame_num}帧")
+            
+            # 对latent进行帧插值
+            latents = self._interpolate_frames(latents[0], frame_num)
+            latents = [latents]  # 保持列表格式
+        
         # 生成视频
         videos = self.vae.decode(latents)
         
-
         # 返回结果和时间信息
         result_videos = videos[0] if self.rank == 0 else None
         timing_info = {
             'total_switch_time': getattr(self, 'total_switch_time', 0.0),
-            'step_timings': getattr(self, 'step_timings', [])
+            'step_timings': getattr(self, 'step_timings', []),
+            'frame_interpolation': enable_frame_interpolation,
+            'original_frame_num': frame_num // 2 if enable_frame_interpolation else frame_num,
+            'final_frame_num': frame_num
         }
         return result_videos, timing_info
