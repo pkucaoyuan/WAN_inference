@@ -459,16 +459,7 @@ class WanT2V:
                     # CFG引导
                     noise_pred = noise_pred_uncond + sample_guide_scale * (
                         noise_pred_cond - noise_pred_uncond)
-                # 使用scheduler进行去噪步骤
-                temp_x0 = sample_scheduler.step(
-                    noise_pred.unsqueeze(0),
-                    t,
-                    latents[0].unsqueeze(0),
-                    return_dict=False,
-                    generator=seed_g)[0]
-                latents = [temp_x0.squeeze(0)]
-                
-                # 帧数减半优化：在高噪声专家结束时进行帧数补全
+                # 帧数减半优化：在高噪声专家结束时进行帧数补全（在scheduler.step之前）
                 if enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps):
                     if self.rank == 0:
                         print(f"🔄 高噪声专家结束，开始帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
@@ -508,6 +499,15 @@ class WanT2V:
                     
                     if self.rank == 0:
                         print(f"✅ 帧数补全完成: {latents[0].shape[1]}帧 (考虑奇偶性)")
+                
+                # 使用scheduler进行去噪步骤
+                temp_x0 = sample_scheduler.step(
+                    noise_pred.unsqueeze(0),
+                    t,
+                    latents[0].unsqueeze(0),
+                    return_dict=False,
+                    generator=seed_g)[0]
+                latents = [temp_x0.squeeze(0)]
                 
                 # 记录每步推理时间
                 step_end_time = time.time()
