@@ -421,6 +421,11 @@ class WanT2V:
                 model_kwargs_c = {**arg_c}
                 model_kwargs_null = {**arg_null}
                 
+                # 帧数减半优化：确保模型使用正确的seq_len
+                if enable_half_frame_generation:
+                    model_kwargs_c['seq_len'] = half_seq_len
+                    model_kwargs_null['seq_len'] = half_seq_len
+                
                 if is_final_steps or is_high_noise_final:
                     # CFG截断：跳过条件前向传播
                     if self.rank == 0:
