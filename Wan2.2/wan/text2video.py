@@ -305,7 +305,7 @@ class WanT2V:
         # 帧数减半优化：第一个专家只生成一半帧数
         original_frame_num = frame_num
         if enable_half_frame_generation:
-            F = frame_num // 2  # 减半帧数
+            F = math.ceil(frame_num / 2)  # 减半帧数，向上取整
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
@@ -472,8 +472,12 @@ class WanT2V:
             current_frames = latents[0].shape[1]  # 当前帧数（减半后）
             target_frames = original_frame_num    # 目标帧数（原始）
             
-            # 创建新的latents tensor
-            new_latents = torch.zeros_like(latents[0][:, :target_frames, :, :])
+            # 创建新的latents tensor: [C, target_frames, H, W]
+            new_latents = torch.zeros(
+                latents[0].shape[0], target_frames, 
+                latents[0].shape[2], latents[0].shape[3],
+                device=latents[0].device, dtype=latents[0].dtype
+            )
             
             # 每一帧复制自己插入到自己后面
             for i in range(current_frames):
