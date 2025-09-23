@@ -506,6 +506,7 @@ class WanT2V:
                     arg_null = {'context': context_null, 'seq_len': current_seq_len}
                     
                     # 重新初始化scheduler状态以避免维度不匹配
+                    # 注意：重新初始化会重置时间步序列，需要确保低噪声专家处理正确的低噪声部分
                     if sample_solver == 'unipc':
                         sample_scheduler = FlowUniPCMultistepScheduler(
                             num_train_timesteps=self.num_train_timesteps,
@@ -513,6 +514,8 @@ class WanT2V:
                             use_dynamic_shifting=False)
                         sample_scheduler.set_timesteps(
                             sampling_steps, device=self.device, shift=shift)
+                        # 重新获取时间步序列
+                        timesteps = sample_scheduler.timesteps
                         # 设置当前步骤索引
                         sample_scheduler.step_index = step_idx + 1
                     elif sample_solver == 'dpm++':
@@ -527,6 +530,18 @@ class WanT2V:
                             sigmas=sampling_sigmas)
                         # 设置当前步骤索引
                         sample_scheduler.step_index = step_idx + 1
+                    
+                    # 重新计算专家切换边界和步骤分配
+                    boundary = self.boundary * self.num_train_timesteps
+                    high_noise_steps = [i for i, ts in enumerate(timesteps) if ts.item() >= boundary]
+                    
+                    if self.rank == 0:
+                        print(f"🔄 重新初始化scheduler后:")
+                        print(f"   - 时间步序列长度: {len(timesteps)}")
+                        print(f"   - 高噪声步骤: {len(high_noise_steps)}步")
+                        print(f"   - 低噪声步骤: {len(timesteps) - len(high_noise_steps)}步")
+                        print(f"   - 当前步骤索引: {sample_scheduler.step_index}")
+                        print(f"   - 当前时间步: {timesteps[step_idx].item() if step_idx < len(timesteps) else 'N/A'}")
                     
                     if self.rank == 0:
                         print(f"✅ 帧数补全完成: {latents[0].shape[1]}帧 (考虑奇偶性)")
