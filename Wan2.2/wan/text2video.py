@@ -469,22 +469,26 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🔄 帧数补齐: 从{latents[0].shape[1]}帧补齐到{original_seq_len}帧")
             
-            # 将生成的latents复制补齐到原始帧数
-            current_frames = latents[0].shape[1]
-            target_frames = original_seq_len
+            # 每一帧复制自己插入到自己后面，最后一帧不需要复制
+            current_frames = latents[0].shape[1]  # 当前帧数（减半后）
+            target_frames = original_seq_len      # 目标帧数（原始）
             
-            # 计算需要复制的帧数
-            frames_to_add = target_frames - current_frames
+            # 创建新的latents tensor
+            new_latents = torch.zeros_like(latents[0][:, :target_frames, :, :])
             
-            # 复制最后一帧来补齐
-            last_frame = latents[0][:, -1:, :, :]  # [C, 1, H, W]
-            repeated_frames = last_frame.repeat(1, frames_to_add, 1, 1)  # [C, frames_to_add, H, W]
+            # 每一帧复制自己插入到自己后面
+            for i in range(current_frames):
+                # 原始帧
+                new_latents[:, i*2, :, :] = latents[0][:, i, :, :]
+                # 复制帧（除了最后一帧）
+                if i*2+1 < target_frames:
+                    new_latents[:, i*2+1, :, :] = latents[0][:, i, :, :]
             
-            # 拼接原始latents和复制的帧
-            latents[0] = torch.cat([latents[0], repeated_frames], dim=1)
+            # 更新latents
+            latents[0] = new_latents
             
             if self.rank == 0:
-                print(f"✅ 帧数补齐完成: {latents[0].shape[1]}帧")
+                print(f"✅ 帧数补齐完成: {latents[0].shape[1]}帧 (每帧复制插入)")
         
         # 生成推理报告
         if self.rank == 0:
