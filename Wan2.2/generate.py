@@ -402,12 +402,12 @@ def generate(args):
         try:
             torch.cuda.set_device(device)
             torch.cuda.empty_cache()
-            # 设置更保守的内存分配
-            torch.cuda.set_per_process_memory_fraction(0.85)
+            # 移除显存限制，使用全部可用显存
+            # torch.cuda.set_per_process_memory_fraction(0.85)  # 已禁用
             # 启用内存池以减少碎片
             os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512'
             if rank == 0:
-                print(f"🔧 GPU内存优化: 设备{device}, 内存分配85%")
+                print(f"🔧 GPU内存优化: 设备{device}, 使用全部可用显存")
         except Exception as e:
             if rank == 0:
                 print(f"⚠️ GPU设置警告: {e}")
