@@ -464,34 +464,38 @@ class WanT2V:
                 self.step_timings.append(step_timing)
         
         # 帧数减半优化：在第一个专家完成后补齐帧数
-        if enable_half_frame_generation and latents[0].shape[1] < original_frame_num:
-            if self.rank == 0:
-                print(f"🔄 帧数补齐: 从{latents[0].shape[1]}帧补齐到{original_frame_num}帧")
+        if enable_half_frame_generation:
+            # 计算原始帧数经过VAE后的目标帧数
+            original_vae_frames = (original_frame_num - 1) // self.vae_stride[0] + 1
+            current_frames = latents[0].shape[1]  # 当前帧数（减半后经过VAE）
             
-            # 每一帧复制自己插入到自己后面，最后一帧不需要复制
-            current_frames = latents[0].shape[1]  # 当前帧数（减半后）
-            target_frames = original_frame_num    # 目标帧数（原始）
-            
-            # 创建新的latents tensor: [C, target_frames, H, W]
-            new_latents = torch.zeros(
-                latents[0].shape[0], target_frames, 
-                latents[0].shape[2], latents[0].shape[3],
-                device=latents[0].device, dtype=latents[0].dtype
-            )
-            
-            # 每一帧复制自己插入到自己后面
-            for i in range(current_frames):
-                # 原始帧
-                new_latents[:, i*2, :, :] = latents[0][:, i, :, :]
-                # 复制帧（除了最后一帧）
-                if i*2+1 < target_frames:
-                    new_latents[:, i*2+1, :, :] = latents[0][:, i, :, :]
-            
-            # 更新latents
-            latents[0] = new_latents
-            
-            if self.rank == 0:
-                print(f"✅ 帧数补齐完成: {latents[0].shape[1]}帧 (每帧复制插入)")
+            if current_frames < original_vae_frames:
+                if self.rank == 0:
+                    print(f"🔄 帧数补齐: 从{current_frames}帧补齐到{original_vae_frames}帧")
+                
+                # 每一帧复制自己插入到自己后面，最后一帧不需要复制
+                target_frames = original_vae_frames    # 目标帧数（原始经过VAE）
+                
+                # 创建新的latents tensor: [C, target_frames, H, W]
+                new_latents = torch.zeros(
+                    latents[0].shape[0], target_frames, 
+                    latents[0].shape[2], latents[0].shape[3],
+                    device=latents[0].device, dtype=latents[0].dtype
+                )
+                
+                # 每一帧复制自己插入到自己后面
+                for i in range(current_frames):
+                    # 原始帧
+                    new_latents[:, i*2, :, :] = latents[0][:, i, :, :]
+                    # 复制帧（除了最后一帧）
+                    if i*2+1 < target_frames:
+                        new_latents[:, i*2+1, :, :] = latents[0][:, i, :, :]
+                
+                # 更新latents
+                latents[0] = new_latents
+                
+                if self.rank == 0:
+                    print(f"✅ 帧数补齐完成: {latents[0].shape[1]}帧 (每帧复制插入)")
         
         # 生成推理报告
         if self.rank == 0:
