@@ -123,52 +123,20 @@ class WanSelfAttention(nn.Module):
         self.norm_q = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
         self.norm_k = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
 
-    def forward(self, x, seq_lens, grid_sizes, freqs, active_mask=None, cached_qkv=None):
+    def forward(self, x, seq_lens, grid_sizes, freqs):
         r"""
         Args:
             x(Tensor): Shape [B, L, num_heads, C / num_heads]
             seq_lens(Tensor): Shape [B]
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
-            active_mask(Tensor): Shape [L], True for active tokens
-            cached_qkv(dict): Cached Q,K,V for frozen tokens
         """
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
 
-        # CAT算法：冻结token复用QKV，激活token计算新QKV
-        if active_mask is not None and cached_qkv is not None:
-            # 使用缓存的QKV + 新计算的激活token QKV
-            active_indices = torch.where(active_mask)[0]
-            frozen_indices = torch.where(~active_mask)[0]
-            
-            # 只对激活token计算新的Q,K,V
-            x_active = x[:, active_indices, :]
-            q_active = self.norm_q(self.q(x_active)).view(b, len(active_indices), n, d)
-            k_active = self.norm_k(self.k(x_active)).view(b, len(active_indices), n, d)
-            v_active = self.v(x_active).view(b, len(active_indices), n, d)
-            
-            # 构建完整的Q,K,V矩阵
-            q = torch.zeros(b, s, n, d, device=x.device, dtype=q_active.dtype)
-            k = torch.zeros(b, s, n, d, device=x.device, dtype=k_active.dtype)
-            v = torch.zeros(b, s, n, d, device=x.device, dtype=v_active.dtype)
-            
-            # 填入激活token的新QKV
-            q[:, active_indices, :, :] = q_active
-            k[:, active_indices, :, :] = k_active
-            v[:, active_indices, :, :] = v_active
-            
-            # 填入冻结token的缓存QKV
-            if len(frozen_indices) > 0:
-                q[:, frozen_indices, :, :] = cached_qkv['q_frozen']
-                k[:, frozen_indices, :, :] = cached_qkv['k_frozen']
-                v[:, frozen_indices, :, :] = cached_qkv['v_frozen']
-            
-            print(f"   ⚡ QKV投影节省: 只计算{len(active_indices)}/{s}个token的QKV")
-        else:
-            # 标准计算：所有token计算QKV
-            q = self.norm_q(self.q(x)).view(b, s, n, d)
-            k = self.norm_k(self.k(x)).view(b, s, n, d)
-            v = self.v(x).view(b, s, n, d)
+        # 标准计算：所有token计算QKV
+        q = self.norm_q(self.q(x)).view(b, s, n, d)
+        k = self.norm_k(self.k(x)).view(b, s, n, d)
+        v = self.v(x).view(b, s, n, d)
 
         x = flash_attention(
             q=rope_apply(q, grid_sizes, freqs),
@@ -217,8 +185,7 @@ class WanAttentionBlock(nn.Module):
                  window_size=(-1, -1),
                  qk_norm=True,
                  cross_attn_norm=False,
-                 eps=1e-6,
-                 enable_token_pruning=False):
+                 eps=1e-6):
         super().__init__()
         self.dim = dim
         self.ffn_dim = ffn_dim
@@ -227,7 +194,6 @@ class WanAttentionBlock(nn.Module):
         self.qk_norm = qk_norm
         self.cross_attn_norm = cross_attn_norm
         self.eps = eps
-        self.enable_token_pruning = enable_token_pruning
 
         # layers
         self.norm1 = WanLayerNorm(dim, eps)
@@ -245,9 +211,6 @@ class WanAttentionBlock(nn.Module):
 
         # modulation
         self.modulation = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
-        
-        # QKV缓存用于冻结token优化
-        self._frozen_qkv_cache = None
 
     def forward(
         self,
@@ -258,7 +221,6 @@ class WanAttentionBlock(nn.Module):
         freqs,
         context,
         context_lens,
-        active_mask=None,
     ):
         r"""
         Args:
@@ -273,227 +235,23 @@ class WanAttentionBlock(nn.Module):
             e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
         assert e[0].dtype == torch.float32
 
-        # Token裁剪优化：只计算激活token
-        if active_mask is not None and self.enable_token_pruning:
-            # 获取激活token的索引
-            active_indices = torch.where(active_mask)[0]
-            
-            if len(active_indices) < x.size(1):  # 确实有token被裁剪
-                # 精确计时：分析每个环节的性能
-                import time
-                layer_start = time.time()
-                attn_time = cache_time = ffn_time = 0.0  # 初始化所有计时变量
-                # 只对激活token进行计算
-                x_active = x[:, active_indices, :]
-                # e是tuple，需要分别处理每个元素
-                e_active = tuple(e_elem[:, active_indices, :] if e_elem.size(1) == x.size(1) else e_elem 
-                               for e_elem in e)
-                
-                # Self-attention：优化版CAT算法，复用冻结token的QKV
-                # 只计算激活token的Q，复用冻结token的K,V
-                
-                # 高效获取冻结token的索引（避免Python循环）
-                all_indices = torch.arange(x.size(1), device=x.device, dtype=torch.long)
-                frozen_mask = torch.ones(x.size(1), dtype=torch.bool, device=x.device)
-                frozen_mask[active_indices] = False
-                frozen_indices = torch.where(frozen_mask)[0]
-                
-                # 计算激活token的归一化输入
-                x_norm = self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
-                
-                # 检查QKV缓存：缓存的冻结token是否仍在当前冻结集合中
-                cache_valid = False
-                if (hasattr(self, '_frozen_qkv_cache') and 
-                    self._frozen_qkv_cache and 
-                    len(frozen_indices) > 0 and
-                    self._frozen_qkv_cache['valid']):
-                    
-                    cached_indices = self._frozen_qkv_cache['frozen_indices']
-                    # 检查缓存的token是否都仍然被冻结（允许新增冻结token）
-                    cached_still_frozen = torch.isin(cached_indices, frozen_indices).all()
-                    cache_valid = cached_still_frozen.item()
-                    
-                    if cache_valid:
-                        print(f"   🔄 QKV缓存有效: {len(cached_indices)}个token复用")
-                    else:
-                        if hasattr(self, '_frozen_qkv_cache') and self._frozen_qkv_cache:
-                            cached_indices = self._frozen_qkv_cache['frozen_indices']
-                            print(f"   ❌ QKV缓存失效: 缓存{len(cached_indices)}个 vs 当前{len(frozen_indices)}个")
-                        else:
-                            print(f"   ❌ QKV缓存失效: 无缓存数据")
-                
-                if cache_valid:
-                    # 使用QKV缓存的混合attention计算
-                    attn_start = time.time()
-                    y_mixed = self._compute_mixed_attention(x_norm, active_indices, frozen_indices, 
-                                                          seq_lens, grid_sizes, freqs)
-                    attn_time = time.time() - attn_start
-                    # 简化QKV缓存输出
-                    pass  # QKV缓存命中，无需输出
-                else:
-                    # CAT算法：传递active_mask和cached_qkv实现真正的QKV复用
-                    cached_qkv_data = self._frozen_qkv_cache if hasattr(self, '_frozen_qkv_cache') and self._frozen_qkv_cache else None
-                    
-                    # 创建完整的active_mask
-                    full_active_mask = torch.ones(x.size(1), dtype=torch.bool, device=x.device)
-                    if len(frozen_indices) > 0:
-                        full_active_mask[frozen_indices] = False
-                    
-                    attn_start = time.time()
-                    y_mixed = self.self_attn(x_norm, seq_lens, grid_sizes, freqs, 
-                                           active_mask=full_active_mask, cached_qkv=cached_qkv_data)
-                    attn_time = time.time() - attn_start
-                
-                # 缓存当前的Q,K,V用于下一步（基于预测的冻结token）
-                cache_start = time.time()
-                self._cache_frozen_qkv(x_norm, frozen_indices, seq_lens, grid_sizes, freqs)
-                cache_time = time.time() - cache_start
-                
-                # Algorithm 1: Line 3-5: 只有选中token使用attention结果更新
-                y = torch.zeros_like(x)
-                y[:, active_indices, :] = y_mixed[:, active_indices, :].to(x.dtype)
-                
-                with torch.amp.autocast('cuda', dtype=torch.float32):
-                    # 只更新激活token，冻结token保持原值
-                    x_new = x + y * e[2].squeeze(2)
-                    x[:, active_indices, :] = x_new[:, active_indices, :].to(x.dtype)
-                    # 冻结token保持x[:, frozen_indices, :]不变
-                
-                # Cross-attention & FFN：按CAT算法实现
-                def cross_attn_ffn_pruned(x, context, context_lens, e, active_indices):
-                    # Algorithm 1: Cross-attention所有token参与，但只更新激活token
-                    cross_out_full = self.cross_attn(self.norm3(x), context, context_lens)
-                    
-                    # ✅ 修复：只有激活token接收cross-attention结果
-                    cross_out = torch.zeros_like(x)
-                    cross_out[:, active_indices, :] = cross_out_full[:, active_indices, :]
-                    x = x + cross_out  # 只有激活token接收cross-attention结果
-                    
-                    # Algorithm 1: Line 4: 只有选中token (Ts,t) 通过MLP(FFN)更新
-                    x_active = x[:, active_indices, :]
-                    e_ffn_active = tuple(e_elem[:, active_indices, :] if e_elem.size(1) == x.size(1) else e_elem 
-                                       for e_elem in e)
-                    ffn_input = self.norm2(x_active).float() * (1 + e_ffn_active[4].squeeze(2)) + e_ffn_active[3].squeeze(2)
-                    ffn_out = self.ffn(ffn_input)  # 🔥 只计算激活token的FFN
-                    print(f"   ⚡ FFN节省: 只计算{len(active_indices)}/{x.size(1)}token ({100*len(active_indices)/x.size(1):.1f}%)")
-                    
-                    with torch.amp.autocast('cuda', dtype=torch.float32):
-                        x_active = x_active + ffn_out * e_ffn_active[5].squeeze(2)
-                    
-                    # Algorithm 1: Line 4: 更新选中token的hidden state
-                    x[:, active_indices, :] = x_active.to(x.dtype)
-                    # Algorithm 1: Line 7: 未选中token保持上一步状态（已经在x中）
-                    return x
-                
-                ffn_start = time.time()
-                x = cross_attn_ffn_pruned(x, context, context_lens, e, active_indices)
-                ffn_time = time.time() - ffn_start
-                
-                layer_total_time = time.time() - layer_start
-                print(f"   📊 层计时: Attention={attn_time:.3f}s, Cache={cache_time:.3f}s, FFN={ffn_time:.3f}s, Total={layer_total_time:.3f}s")
-            else:
-                # 没有token被裁剪，正常计算
-                y = self.self_attn(
-                    self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
-                    seq_lens, grid_sizes, freqs)
-                with torch.amp.autocast('cuda', dtype=torch.float32):
-                    x = x + y * e[2].squeeze(2)
+        # 标准计算路径
+        y = self.self_attn(
+            self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
+            seq_lens, grid_sizes, freqs)
+        with torch.amp.autocast('cuda', dtype=torch.float32):
+            x = x + y * e[2].squeeze(2)
 
-                def cross_attn_ffn(x, context, context_lens, e):
-                    x = x + self.cross_attn(self.norm3(x), context, context_lens)
-                    y = self.ffn(
-                        self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
-                    with torch.amp.autocast('cuda', dtype=torch.float32):
-                        x = x + y * e[5].squeeze(2)
-                    return x
-
-                x = cross_attn_ffn(x, context, context_lens, e)
-        else:
-            # 标准计算路径（无裁剪）
-            y = self.self_attn(
-                self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
-                seq_lens, grid_sizes, freqs)
+        def cross_attn_ffn(x, context, context_lens, e):
+            x = x + self.cross_attn(self.norm3(x), context, context_lens)
+            y = self.ffn(
+                self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
             with torch.amp.autocast('cuda', dtype=torch.float32):
-                x = x + y * e[2].squeeze(2)
+                x = x + y * e[5].squeeze(2)
+            return x
 
-            def cross_attn_ffn(x, context, context_lens, e):
-                x = x + self.cross_attn(self.norm3(x), context, context_lens)
-                y = self.ffn(
-                    self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
-                with torch.amp.autocast('cuda', dtype=torch.float32):
-                    x = x + y * e[5].squeeze(2)
-                return x
-
-            x = cross_attn_ffn(x, context, context_lens, e)
+        x = cross_attn_ffn(x, context, context_lens, e)
         return x
-    
-    def _cache_frozen_qkv(self, x_norm, frozen_indices, seq_lens, grid_sizes, freqs):
-        """缓存冻结token的Q,K,V用于下一步复用"""
-        if len(frozen_indices) > 0:
-            # 计算并缓存冻结token的Q,K,V
-            x_frozen = x_norm[:, frozen_indices, :]
-            
-            # 计算冻结token的Q,K,V（用于下一步复用）
-            b, s_frozen = x_frozen.size(0), len(frozen_indices)
-            n, d = self.self_attn.num_heads, self.self_attn.head_dim
-            q_frozen = self.self_attn.norm_q(self.self_attn.q(x_frozen)).view(b, s_frozen, n, d)
-            k_frozen = self.self_attn.norm_k(self.self_attn.k(x_frozen)).view(b, s_frozen, n, d)
-            v_frozen = self.self_attn.v(x_frozen).view(b, s_frozen, n, d)
-            
-            self._frozen_qkv_cache = {
-                'frozen_indices': frozen_indices.clone(),
-                'q_frozen': q_frozen.clone(),
-                'k_frozen': k_frozen.clone(), 
-                'v_frozen': v_frozen.clone(),
-                'valid': True
-            }
-        else:
-            self._frozen_qkv_cache = None
-    
-    def _compute_mixed_attention(self, x_norm, active_indices, frozen_indices, seq_lens, grid_sizes, freqs):
-        """计算混合attention：新的激活token QKV + 缓存的冻结token QKV"""
-        if self._frozen_qkv_cache and self._frozen_qkv_cache['valid']:
-            # 计算激活token的Q,K,V
-            x_active = x_norm[:, active_indices, :]
-            b, s_active = x_active.size(0), len(active_indices)
-            n, d = self.self_attn.num_heads, self.self_attn.head_dim
-            
-            q_active = self.self_attn.norm_q(self.self_attn.q(x_active)).view(b, s_active, n, d)
-            k_active = self.self_attn.norm_k(self.self_attn.k(x_active)).view(b, s_active, n, d)
-            v_active = self.self_attn.v(x_active).view(b, s_active, n, d)
-            
-            # 获取缓存的冻结token Q,K,V
-            q_frozen = self._frozen_qkv_cache['q_frozen']
-            k_frozen = self._frozen_qkv_cache['k_frozen'] 
-            v_frozen = self._frozen_qkv_cache['v_frozen']
-            
-            # 重新组合完整的Q,K,V矩阵
-            full_seq_len = x_norm.size(1)
-            q_full = torch.zeros(b, full_seq_len, n, d, device=x_norm.device, dtype=q_active.dtype)
-            k_full = torch.zeros(b, full_seq_len, n, d, device=x_norm.device, dtype=k_active.dtype)
-            v_full = torch.zeros(b, full_seq_len, n, d, device=x_norm.device, dtype=v_active.dtype)
-            
-            # 填入激活token的新Q,K,V
-            q_full[:, active_indices, :, :] = q_active
-            k_full[:, active_indices, :, :] = k_active
-            v_full[:, active_indices, :, :] = v_active
-            
-            # 填入冻结token的缓存Q,K,V
-            q_full[:, frozen_indices, :, :] = q_frozen
-            k_full[:, frozen_indices, :, :] = k_frozen
-            v_full[:, frozen_indices, :, :] = v_frozen
-            
-            # 使用混合的Q,K,V计算attention（简化版本）
-            # 注意：这里需要手动实现attention，因为flash_attention不支持混合输入
-            scale = (d ** -0.5)
-            attention_scores = torch.matmul(q_full, k_full.transpose(-2, -1)) * scale
-            attention_weights = torch.softmax(attention_scores, dim=-1)
-            attention_out = torch.matmul(attention_weights, v_full)  # [B, L, H, d]
-            
-            return attention_out.flatten(-2).to(x_norm.dtype)  # [B, L, H*d] 保持数据类型一致
-        
-        # 回退到完整计算
-        return self.self_attn(x_norm, seq_lens, grid_sizes, freqs)
 
 
 class Head(nn.Module):
@@ -625,7 +383,7 @@ class WanModel(ModelMixin, ConfigMixin):
         # blocks
         self.blocks = nn.ModuleList([
             WanAttentionBlock(dim, ffn_dim, num_heads, window_size, qk_norm,
-                              cross_attn_norm, eps, enable_token_pruning=True) for _ in range(num_layers)
+                              cross_attn_norm, eps) for _ in range(num_layers)
         ])
 
         # head
@@ -651,7 +409,6 @@ class WanModel(ModelMixin, ConfigMixin):
         context,
         seq_len,
         y=None,
-        active_mask=None,
     ):
         r"""
         Forward pass through the diffusion model
@@ -722,8 +479,7 @@ class WanModel(ModelMixin, ConfigMixin):
             grid_sizes=grid_sizes,
             freqs=self.freqs,
             context=context,
-            context_lens=context_lens,
-            active_mask=active_mask)
+            context_lens=context_lens)
 
         for block in self.blocks:
             x = block(x, **kwargs)
