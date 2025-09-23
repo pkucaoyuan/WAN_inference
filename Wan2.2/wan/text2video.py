@@ -516,8 +516,8 @@ class WanT2V:
                             sampling_steps, device=self.device, shift=shift)
                         # 重新获取时间步序列
                         timesteps = sample_scheduler.timesteps
-                        # 设置当前步骤索引
-                        sample_scheduler.step_index = step_idx + 1
+                        # 正确设置当前步骤索引
+                        sample_scheduler._step_index = step_idx + 1
                     elif sample_solver == 'dpm++':
                         sample_scheduler = FlowDPMSolverMultistepScheduler(
                             num_train_timesteps=self.num_train_timesteps,
@@ -528,8 +528,8 @@ class WanT2V:
                             sample_scheduler,
                             device=self.device,
                             sigmas=sampling_sigmas)
-                        # 设置当前步骤索引
-                        sample_scheduler.step_index = step_idx + 1
+                        # 正确设置当前步骤索引
+                        sample_scheduler._step_index = step_idx + 1
                     
                     # 重新计算专家切换边界和步骤分配
                     boundary = self.boundary * self.num_train_timesteps
