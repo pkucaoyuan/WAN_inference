@@ -430,14 +430,14 @@ class WanT2V:
                     
                     # 只计算无条件预测
                     noise_pred_uncond = model(
-                        latent_model_input, timestep, **model_kwargs_null)
+                        latent_model_input, timestep, **model_kwargs_null)[0]
                     noise_pred = noise_pred_uncond
                 else:
                     # 正常CFG计算
                     noise_pred_cond = model(
-                        latent_model_input, timestep, **model_kwargs_c)
+                        latent_model_input, timestep, **model_kwargs_c)[0]
                     noise_pred_uncond = model(
-                        latent_model_input, timestep, **model_kwargs_null)
+                        latent_model_input, timestep, **model_kwargs_null)[0]
                     
                     # CFG引导
                     noise_pred = noise_pred_uncond + sample_guide_scale * (
