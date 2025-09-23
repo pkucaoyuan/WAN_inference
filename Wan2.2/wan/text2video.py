@@ -301,7 +301,16 @@ class WanT2V:
         # preprocess
         guide_scale = (guide_scale, guide_scale) if isinstance(
             guide_scale, float) else guide_scale
-        F = frame_num
+        
+        # 帧数减半优化：第一个专家只生成一半帧数
+        original_frame_num = frame_num
+        if enable_half_frame_generation:
+            F = frame_num // 2  # 减半帧数
+            if self.rank == 0:
+                print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
+        else:
+            F = frame_num
+            
         target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
                         size[1] // self.vae_stride[1],
                         size[0] // self.vae_stride[2])
@@ -380,19 +389,9 @@ class WanT2V:
 
             # sample videos
             latents = noise
-            
-            # 帧数减半优化：第一个专家只生成一半帧数
-            original_seq_len = seq_len
-            if enable_half_frame_generation:
-                # 计算减半后的序列长度
-                half_seq_len = seq_len // 2
-                if self.rank == 0:
-                    print(f"🎬 帧数减半优化: 第一个专家生成{half_seq_len}帧，最终补齐到{seq_len}帧")
-            else:
-                half_seq_len = seq_len
 
-            arg_c = {'context': context, 'seq_len': half_seq_len}
-            arg_null = {'context': context_null, 'seq_len': half_seq_len}
+            arg_c = {'context': context, 'seq_len': seq_len}
+            arg_null = {'context': context_null, 'seq_len': seq_len}
 
 
             import time
@@ -420,11 +419,6 @@ class WanT2V:
                 # 准备模型调用参数
                 model_kwargs_c = {**arg_c}
                 model_kwargs_null = {**arg_null}
-                
-                # 帧数减半优化：确保模型使用正确的seq_len
-                if enable_half_frame_generation:
-                    model_kwargs_c['seq_len'] = half_seq_len
-                    model_kwargs_null['seq_len'] = half_seq_len
                 
                 if is_final_steps or is_high_noise_final:
                     # CFG截断：跳过条件前向传播
@@ -470,13 +464,13 @@ class WanT2V:
                 self.step_timings.append(step_timing)
         
         # 帧数减半优化：在第一个专家完成后补齐帧数
-        if enable_half_frame_generation and latents[0].shape[1] < original_seq_len:
+        if enable_half_frame_generation and latents[0].shape[1] < original_frame_num:
             if self.rank == 0:
-                print(f"🔄 帧数补齐: 从{latents[0].shape[1]}帧补齐到{original_seq_len}帧")
+                print(f"🔄 帧数补齐: 从{latents[0].shape[1]}帧补齐到{original_frame_num}帧")
             
             # 每一帧复制自己插入到自己后面，最后一帧不需要复制
             current_frames = latents[0].shape[1]  # 当前帧数（减半后）
-            target_frames = original_seq_len      # 目标帧数（原始）
+            target_frames = original_frame_num    # 目标帧数（原始）
             
             # 创建新的latents tensor
             new_latents = torch.zeros_like(latents[0][:, :target_frames, :, :])
