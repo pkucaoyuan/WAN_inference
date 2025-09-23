@@ -311,13 +311,23 @@ class WanT2V:
         else:
             F = frame_num
             
-        target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
-                        size[1] // self.vae_stride[1],
-                        size[0] // self.vae_stride[2])
+        # 计算减半后的target_shape和seq_len（用于高噪声专家）
+        half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
+                            size[1] // self.vae_stride[1],
+                            size[0] // self.vae_stride[2])
 
-        seq_len = math.ceil((target_shape[2] * target_shape[3]) /
-                            (self.patch_size[1] * self.patch_size[2]) *
-                            target_shape[1] / self.sp_size) * self.sp_size
+        half_seq_len = math.ceil((half_target_shape[2] * half_target_shape[3]) /
+                                (self.patch_size[1] * self.patch_size[2]) *
+                                half_target_shape[1] / self.sp_size) * self.sp_size
+        
+        # 计算完整帧数的target_shape和seq_len（用于低噪声专家）
+        full_target_shape = (self.vae.model.z_dim, (frame_num - 1) // self.vae_stride[0] + 1,
+                            size[1] // self.vae_stride[1],
+                            size[0] // self.vae_stride[2])
+
+        full_seq_len = math.ceil((full_target_shape[2] * full_target_shape[3]) /
+                                (self.patch_size[1] * self.patch_size[2]) *
+                                full_target_shape[1] / self.sp_size) * self.sp_size
 
         if n_prompt == "":
             n_prompt = self.sample_neg_prompt
@@ -337,12 +347,13 @@ class WanT2V:
             context = [t.to(self.device) for t in context]
             context_null = [t.to(self.device) for t in context_null]
 
+        # 使用减半后的target_shape生成noise（高噪声专家）
         noise = [
             torch.randn(
-                target_shape[0],
-                target_shape[1],
-                target_shape[2],
-                target_shape[3],
+                half_target_shape[0],
+                half_target_shape[1],
+                half_target_shape[2],
+                half_target_shape[3],
                 dtype=torch.float32,
                 device=self.device,
                 generator=seed_g)
@@ -390,8 +401,14 @@ class WanT2V:
             # sample videos
             latents = noise
 
-            arg_c = {'context': context, 'seq_len': seq_len}
-            arg_null = {'context': context_null, 'seq_len': seq_len}
+            # 根据当前阶段使用不同的seq_len
+            if enable_half_frame_generation:
+                current_seq_len = half_seq_len  # 高噪声专家使用减半的seq_len
+            else:
+                current_seq_len = full_seq_len
+
+            arg_c = {'context': context, 'seq_len': current_seq_len}
+            arg_null = {'context': context_null, 'seq_len': current_seq_len}
 
 
             import time
@@ -451,6 +468,47 @@ class WanT2V:
                     generator=seed_g)[0]
                 latents = [temp_x0.squeeze(0)]
                 
+                # 帧数减半优化：在高噪声专家结束时进行帧数补全
+                if enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps):
+                    if self.rank == 0:
+                        print(f"🔄 高噪声专家结束，开始帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
+                    
+                    # 计算当前帧数和目标帧数
+                    current_frames = latents[0].shape[1]  # 当前帧数（减半后经过VAE）
+                    target_frames = full_target_shape[1]  # 目标帧数（完整帧数经过VAE）
+                    
+                    # 创建新的latents tensor: [C, target_frames, H, W]
+                    new_latents = torch.zeros(
+                        latents[0].shape[0], target_frames, 
+                        latents[0].shape[2], latents[0].shape[3],
+                        device=latents[0].device, dtype=latents[0].dtype
+                    )
+                    
+                    # 考虑奇偶性的帧数补全
+                    if target_frames % 2 == 0:  # 偶帧：每帧都重复
+                        for i in range(current_frames):
+                            if i*2 < target_frames:
+                                new_latents[:, i*2, :, :] = latents[0][:, i, :, :]
+                            if i*2+1 < target_frames:
+                                new_latents[:, i*2+1, :, :] = latents[0][:, i, :, :]
+                    else:  # 奇帧：最后一帧不重复
+                        for i in range(current_frames):
+                            if i*2 < target_frames:
+                                new_latents[:, i*2, :, :] = latents[0][:, i, :, :]
+                            if i*2+1 < target_frames:
+                                new_latents[:, i*2+1, :, :] = latents[0][:, i, :, :]
+                    
+                    # 更新latents
+                    latents[0] = new_latents
+                    
+                    # 更新seq_len为完整帧数的seq_len（低噪声专家使用）
+                    current_seq_len = full_seq_len
+                    arg_c = {'context': context, 'seq_len': current_seq_len}
+                    arg_null = {'context': context_null, 'seq_len': current_seq_len}
+                    
+                    if self.rank == 0:
+                        print(f"✅ 帧数补全完成: {latents[0].shape[1]}帧 (考虑奇偶性)")
+                
                 # 记录每步推理时间
                 step_end_time = time.time()
                 step_duration = step_end_time - step_start_time
@@ -463,39 +521,6 @@ class WanT2V:
                 }
                 self.step_timings.append(step_timing)
         
-        # 帧数减半优化：在第一个专家完成后补齐帧数
-        if enable_half_frame_generation:
-            # 计算原始帧数经过VAE后的目标帧数
-            original_vae_frames = (original_frame_num - 1) // self.vae_stride[0] + 1
-            current_frames = latents[0].shape[1]  # 当前帧数（减半后经过VAE）
-            
-            if current_frames < original_vae_frames:
-                if self.rank == 0:
-                    print(f"🔄 帧数补齐: 从{current_frames}帧补齐到{original_vae_frames}帧")
-                
-                # 每一帧复制自己插入到自己后面，最后一帧不需要复制
-                target_frames = original_vae_frames    # 目标帧数（原始经过VAE）
-                
-                # 创建新的latents tensor: [C, target_frames, H, W]
-                new_latents = torch.zeros(
-                    latents[0].shape[0], target_frames, 
-                    latents[0].shape[2], latents[0].shape[3],
-                    device=latents[0].device, dtype=latents[0].dtype
-                )
-                
-                # 每一帧复制自己插入到自己后面
-                for i in range(current_frames):
-                    # 原始帧
-                    new_latents[:, i*2, :, :] = latents[0][:, i, :, :]
-                    # 复制帧（除了最后一帧）
-                    if i*2+1 < target_frames:
-                        new_latents[:, i*2+1, :, :] = latents[0][:, i, :, :]
-                
-                # 更新latents
-                latents[0] = new_latents
-                
-                if self.rank == 0:
-                    print(f"✅ 帧数补齐完成: {latents[0].shape[1]}帧 (每帧复制插入)")
         
         # 生成推理报告
         if self.rank == 0:
