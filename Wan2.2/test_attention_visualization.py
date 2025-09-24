@@ -252,15 +252,14 @@ def main():
             )
             
             print("开始生成视频并可视化注意力...")
-            video, timing_info = model.generate_with_attention_visualization(
-                prompt=args.prompt,
-                num_frames=args.num_frames,
-                height=args.height,
-                width=args.width,
-                num_inference_steps=args.num_inference_steps,
-                guidance_scale=args.guidance_scale,
-                save_attention=True,
-                output_dir=args.output_dir
+            video, timing_info = model.generate(
+                input_prompt=args.prompt,
+                frame_num=args.num_frames,
+                size=(args.width, args.height),
+                sampling_steps=args.num_inference_steps,
+                guide_scale=args.guidance_scale,
+                enable_attention_visualization=True,
+                attention_output_dir=args.output_dir
             )
             
             print(f"视频生成完成: {video.shape}")

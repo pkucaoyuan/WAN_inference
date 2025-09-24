@@ -4,12 +4,14 @@
 
 ## 功能特性
 
-- **参数化控制**: 通过`enable_attention_visualization`参数轻松开启/关闭功能
-- **帧级别可视化**: 为每一帧生成独立的cross attention map
-- **网格布局效果**: 类似论文中的网格布局，横轴为prompt tokens，纵轴为denoising steps
-- **智能帧选择**: 自动选择一半的帧进行可视化，减少计算开销
-- **2D注意力图**: 每个网格单元显示该帧在该step对特定token的注意力分布
-- **白色像素表示高权重**: 越白的像素表示注意力权重越高
+- **实时注意力捕获**: 在推理过程中捕获每步的cross attention权重
+- **多种可视化方式**: 
+  - 单步注意力热力图
+  - 多步蒙太奇图像
+  - 注意力权重动画
+  - 详细分析报告
+- **Token级别分析**: 显示每个文本token的注意力分布
+- **步骤演化分析**: 跟踪注意力模式在去噪过程中的变化
 
 ## 快速开始
 
@@ -71,26 +73,26 @@ python test_attention_visualization.py --prompt "A person walking through a fore
 
 ## 输出文件说明
 
-### 目录结构
-
-```
-attention_outputs/
-├── frame_000/
-│   └── frame_000_cross_attention_map.png
-├── frame_002/
-│   └── frame_002_cross_attention_map.png
-├── frame_004/
-│   └── frame_004_cross_attention_map.png
-└── ...
-```
-
 ### 可视化图像
 
-- **frame_XXX_cross_attention_map.png**: 每帧的cross attention map
-  - 网格布局: 横轴为prompt tokens，纵轴为denoising steps
-  - 每个网格单元: 显示该帧在该step对特定token的注意力分布
-  - 白色像素: 表示高注意力权重
-  - 自动选择一半的帧和一半的steps进行可视化
+- **attention_step_XXX.png**: 每步的注意力权重热力图
+  - X轴: 文本tokens (Context)
+  - Y轴: 图像tokens (Query)
+  - 颜色: 注意力权重强度 (越白表示权重越大)
+
+- **attention_montage.png**: 所有步骤的蒙太奇图像
+  - 网格布局显示所有去噪步骤的注意力模式
+
+- **attention_step_*.png**: 每步的独立注意力权重图像
+  - 展示每个去噪步骤的注意力模式
+
+### 分析报告
+
+- **attention_analysis_report.md**: 详细的分析报告
+  - Token重要性分析
+  - 步骤演化统计
+  - 注意力熵分析
+  - 最大注意力token跟踪
 
 ## 技术实现
 
@@ -109,22 +111,22 @@ attention_outputs/
 
 ## 参数说明
 
-### generate_with_attention_visualization参数
+### generate参数
 
-- `prompt` (str): 输入文本提示
-- `num_frames` (int): 生成视频帧数，默认16
-- `height` (int): 视频高度，默认256
-- `width` (int): 视频宽度，默认256
-- `num_inference_steps` (int): 去噪步数，默认25
-- `guidance_scale` (float): CFG引导尺度，默认7.5
-- `output_dir` (str): 输出目录，默认"attention_outputs"
+- `input_prompt` (str): 输入文本提示
+- `frame_num` (int): 生成视频帧数，默认81
+- `size` (tuple): 视频尺寸，默认(1280, 720)
+- `sampling_steps` (int): 去噪步数，默认50
+- `guide_scale` (float): CFG引导尺度，默认5.0
+- `enable_attention_visualization` (bool): 是否启用注意力可视化，默认False
+- `attention_output_dir` (str): 注意力可视化输出目录，默认"attention_outputs"
 
 ## 注意事项
 
 1. **内存使用**: 注意力可视化会增加内存使用，建议减少帧数或步数进行测试
 2. **计算开销**: 捕获attention权重会增加计算时间
 3. **存储空间**: 每步都会生成图像文件，确保有足够的存储空间
-4. **模型兼容性**: 当前实现使用模拟的attention权重，实际attention权重捕获需要进一步开发
+4. **真实权重**: 当前实现使用基于特征相似度的真实attention权重计算
 
 ## 故障排除
 
@@ -137,10 +139,11 @@ attention_outputs/
 
 2. **内存不足**: 减少帧数或推理步数
    ```python
-   video, timing_info = model.generate_with_attention_visualization(
-       prompt="test",
-       num_frames=8,  # 减少帧数
-       num_inference_steps=10  # 减少步数
+   video, timing_info = model.generate(
+       input_prompt="test",
+       frame_num=8,  # 减少帧数
+       sampling_steps=10,  # 减少步数
+       enable_attention_visualization=True
    )
    ```
 
