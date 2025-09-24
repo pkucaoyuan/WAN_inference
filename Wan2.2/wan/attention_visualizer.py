@@ -231,28 +231,7 @@ class AttentionVisualizer:
         plt.close(fig)
         return img_array
     
-    def create_attention_animation(self, 
-                                 attention_weights_list: List[torch.Tensor],
-                                 tokens: List[str],
-                                 save_path: str = None) -> List[np.ndarray]:
-        """创建注意力权重的动画帧"""
-        
-        frames = []
-        for i, attention_weights in enumerate(attention_weights_list):
-            frame = self.visualize_attention_step(attention_weights, tokens, i)
-            frames.append(frame)
-        
-        if save_path:
-            # 保存为GIF
-            frames_pil = [Image.fromarray(frame) for frame in frames]
-            frames_pil[0].save(save_path, 
-                             save_all=True, 
-                             append_images=frames_pil[1:], 
-                             duration=500, 
-                             loop=0)
-            print(f"Attention animation saved to: {save_path}")
-        
-        return frames
+    # GIF功能已移除，专注于帧级别的注意力可视化
     
     def analyze_attention_patterns(self, 
                                  attention_weights_list: List[torch.Tensor],

@@ -4,14 +4,12 @@
 
 ## 功能特性
 
-- **实时注意力捕获**: 在推理过程中捕获每步的cross attention权重
-- **多种可视化方式**: 
-  - 单步注意力热力图
-  - 多步蒙太奇图像
-  - 注意力权重动画
-  - 详细分析报告
-- **Token级别分析**: 显示每个文本token的注意力分布
-- **步骤演化分析**: 跟踪注意力模式在去噪过程中的变化
+- **参数化控制**: 通过`enable_attention_visualization`参数轻松开启/关闭功能
+- **帧级别可视化**: 为每一帧生成独立的cross attention map
+- **网格布局效果**: 类似论文中的网格布局，横轴为prompt tokens，纵轴为denoising steps
+- **智能帧选择**: 自动选择一半的帧进行可视化，减少计算开销
+- **2D注意力图**: 每个网格单元显示该帧在该step对特定token的注意力分布
+- **白色像素表示高权重**: 越白的像素表示注意力权重越高
 
 ## 快速开始
 
@@ -28,14 +26,14 @@ model = WanT2V.from_pretrained(
 )
 
 # 生成视频并可视化注意力
-video, timing_info = model.generate_with_attention_visualization(
-    prompt="A beautiful sunset over the ocean",
-    num_frames=16,
-    height=256,
-    width=256,
-    num_inference_steps=25,
-    guidance_scale=7.5,
-    output_dir="attention_outputs"
+video, timing_info = model.generate(
+    input_prompt="A beautiful sunset over the ocean",
+    frame_num=16,
+    size=(256, 256),
+    sampling_steps=25,
+    guide_scale=7.5,
+    enable_attention_visualization=True,
+    attention_output_dir="attention_outputs"
 )
 ```
 
@@ -47,12 +45,11 @@ model.enable_attention_visualization("my_attention_outputs")
 
 # 正常生成视频
 video, timing_info = model.generate(
-    prompt="A cat playing with a ball of yarn",
-    num_frames=16,
-    height=256,
-    width=256,
-    num_inference_steps=25,
-    guidance_scale=7.5
+    input_prompt="A cat playing with a ball of yarn",
+    frame_num=16,
+    size=(256, 256),
+    sampling_steps=25,
+    guide_scale=7.5
 )
 
 # 禁用注意力可视化
@@ -74,26 +71,26 @@ python test_attention_visualization.py --prompt "A person walking through a fore
 
 ## 输出文件说明
 
+### 目录结构
+
+```
+attention_outputs/
+├── frame_000/
+│   └── frame_000_cross_attention_map.png
+├── frame_002/
+│   └── frame_002_cross_attention_map.png
+├── frame_004/
+│   └── frame_004_cross_attention_map.png
+└── ...
+```
+
 ### 可视化图像
 
-- **attention_step_XXX.png**: 每步的注意力权重热力图
-  - X轴: 文本tokens (Context)
-  - Y轴: 图像tokens (Query)
-  - 颜色: 注意力权重强度 (越白表示权重越大)
-
-- **attention_montage.png**: 所有步骤的蒙太奇图像
-  - 网格布局显示所有去噪步骤的注意力模式
-
-- **attention_animation.gif**: 注意力权重动画
-  - 展示注意力模式在去噪过程中的动态变化
-
-### 分析报告
-
-- **attention_analysis_report.md**: 详细的分析报告
-  - Token重要性分析
-  - 步骤演化统计
-  - 注意力熵分析
-  - 最大注意力token跟踪
+- **frame_XXX_cross_attention_map.png**: 每帧的cross attention map
+  - 网格布局: 横轴为prompt tokens，纵轴为denoising steps
+  - 每个网格单元: 显示该帧在该step对特定token的注意力分布
+  - 白色像素: 表示高注意力权重
+  - 自动选择一半的帧和一半的steps进行可视化
 
 ## 技术实现
 

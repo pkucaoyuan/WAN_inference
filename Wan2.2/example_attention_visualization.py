@@ -40,14 +40,14 @@ def main():
         
         try:
             # 使用注意力可视化生成视频
-            video, timing_info = model.generate_with_attention_visualization(
-                prompt=prompt,
-                num_frames=8,  # 减少帧数以加快测试
-                height=256,
-                width=256,
-                num_inference_steps=10,  # 减少步数以加快测试
-                guidance_scale=7.5,
-                output_dir=f"attention_demo_{i+1}"
+            video, timing_info = model.generate(
+                input_prompt=prompt,
+                frame_num=8,  # 减少帧数以加快测试
+                size=(256, 256),
+                sampling_steps=10,  # 减少步数以加快测试
+                guide_scale=7.5,
+                enable_attention_visualization=True,
+                attention_output_dir=f"attention_demo_{i+1}"
             )
             
             print(f"✅ 视频生成成功!")
