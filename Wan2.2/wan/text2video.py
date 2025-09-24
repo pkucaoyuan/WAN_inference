@@ -682,23 +682,24 @@ class WanT2V:
         print(f"Token数量: {len(tokens)}")
         print(f"Token列表: {tokens}")
         
-        # 创建单步可视化
-        for i, attention_weights in enumerate(self.attention_weights_history):
-            save_path = os.path.join(self.attention_output_dir, f"attention_step_{i:03d}.png")
+        # 计算所有cross attention map的平均值
+        if self.attention_weights_history:
+            # 将所有attention权重堆叠并计算平均
+            all_attention_weights = torch.stack(self.attention_weights_history)  # [steps, batch, heads, seq_len, context_len]
+            
+            # 平均所有步骤、批次和注意力头
+            avg_attention_weights = all_attention_weights.mean(dim=(0, 1, 2))  # [seq_len, context_len]
+            
+            # 创建平均cross attention map的可视化
+            avg_save_path = os.path.join(self.attention_output_dir, "average_cross_attention_map.png")
             self.attention_visualizer.visualize_attention_step(
-                attention_weights, tokens, i, save_path
+                avg_attention_weights.unsqueeze(0).unsqueeze(0),  # 添加batch和head维度
+                tokens, 0, avg_save_path, title="Average Cross Attention Map"
             )
-        
-        # 创建蒙太奇
-        montage_path = os.path.join(self.attention_output_dir, "attention_montage.png")
-        self.attention_visualizer.create_attention_montage(
-            self.attention_weights_history, tokens, montage_path
-        )
-        
-        # 创建序列图像
-        self.attention_visualizer.create_attention_sequence(
-            self.attention_weights_history, tokens, self.attention_output_dir
-        )
+            
+            print(f"平均Cross Attention Map已保存到: {avg_save_path}")
+            print(f"平均权重形状: {avg_attention_weights.shape}")
+            print(f"权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
         
         # 创建分析报告
         analysis = self.attention_visualizer.analyze_attention_patterns(

@@ -75,16 +75,11 @@ python test_attention_visualization.py --prompt "A person walking through a fore
 
 ### 可视化图像
 
-- **attention_step_XXX.png**: 每步的注意力权重热力图
+- **average_cross_attention_map.png**: 平均Cross Attention Map
   - X轴: 文本tokens (Context)
   - Y轴: 图像tokens (Query)
   - 颜色: 注意力权重强度 (越白表示权重越大)
-
-- **attention_montage.png**: 所有步骤的蒙太奇图像
-  - 网格布局显示所有去噪步骤的注意力模式
-
-- **attention_step_*.png**: 每步的独立注意力权重图像
-  - 展示每个去噪步骤的注意力模式
+  - 内容: 所有去噪步骤、批次和注意力头的平均注意力权重
 
 ### 分析报告
 

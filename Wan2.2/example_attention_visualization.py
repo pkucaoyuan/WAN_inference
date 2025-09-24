@@ -62,9 +62,7 @@ def main():
     
     print("\n=== 注意力可视化示例完成 ===")
     print("请查看生成的attention_demo_*目录中的可视化结果:")
-    print("- attention_step_*.png: 每步的注意力权重热力图")
-    print("- attention_montage.png: 所有步骤的蒙太奇图像")
-    print("- attention_animation.gif: 注意力权重动画")
+    print("- average_cross_attention_map.png: 平均Cross Attention Map")
     print("- attention_analysis_report.md: 详细的分析报告")
 
 

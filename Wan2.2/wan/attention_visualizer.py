@@ -116,7 +116,8 @@ class AttentionVisualizer:
                                 attention_weights: torch.Tensor,
                                 tokens: List[str],
                                 step: int,
-                                save_path: str = None) -> np.ndarray:
+                                save_path: str = None,
+                                title: str = None) -> np.ndarray:
         """可视化单步注意力权重"""
         
         # attention_weights shape: [batch, num_heads, seq_len_q, seq_len_k]
@@ -140,7 +141,10 @@ class AttentionVisualizer:
         # 设置坐标轴
         ax.set_xlabel('Key Tokens (Context)', fontsize=12)
         ax.set_ylabel('Query Tokens (Image)', fontsize=12)
-        ax.set_title(f'Cross Attention Weights - Step {step}', fontsize=14)
+        if title:
+            ax.set_title(title, fontsize=14)
+        else:
+            ax.set_title(f'Cross Attention Weights - Step {step}', fontsize=14)
         
         # 设置tick labels
         if len(tokens) <= 50:  # 避免标签过密
