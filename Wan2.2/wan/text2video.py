@@ -739,7 +739,9 @@ class WanT2V:
                                 # 如果模块支持返回attention权重
                                 cross_attn_out, attention_weights = module.cross_attn(
                                     input[0], input[1], input[2], return_attention=True)
-                                captured_attention.append(attention_weights)
+                                # 确保attention_weights是张量
+                                if isinstance(attention_weights, torch.Tensor):
+                                    captured_attention.append(attention_weights)
                         except Exception as e:
                             # 如果无法获取真实权重，创建基于输入的特征相似度
                             if len(input) >= 2:
@@ -752,7 +754,9 @@ class WanT2V:
                                     # 计算相似度矩阵
                                     similarity = torch.matmul(q_flat, k_flat.transpose(-2, -1))
                                     attention_weights = torch.softmax(similarity, dim=-1)
-                                    captured_attention.append(attention_weights)
+                                    # 确保是张量
+                                    if isinstance(attention_weights, torch.Tensor):
+                                        captured_attention.append(attention_weights)
                 
                 # 注册hook到当前使用的模型的所有attention block
                 hooks = []
@@ -769,12 +773,25 @@ class WanT2V:
                     if captured_attention:
                         # 使用第一个捕获的权重（通常是主要的cross attention）
                         attention_weights = captured_attention[0]
-                        self.attention_weights_history.append(attention_weights)
-                        if self.rank == 0:
-                            # 显示当前使用的模型类型
-                            model_type = "高噪声专家" if timestep.item() >= self.boundary * self.num_train_timesteps else "低噪声专家"
-                            print(f"🔍 捕获{model_type}注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
-                    else:
+                        
+                        # 确保attention_weights是张量
+                        if isinstance(attention_weights, list):
+                            # 如果是列表，取第一个元素
+                            attention_weights = attention_weights[0] if attention_weights else None
+                        
+                        if attention_weights is not None and hasattr(attention_weights, 'shape'):
+                            self.attention_weights_history.append(attention_weights)
+                            if self.rank == 0:
+                                # 显示当前使用的模型类型
+                                model_type = "高噪声专家" if timestep.item() >= self.boundary * self.num_train_timesteps else "低噪声专家"
+                                print(f"🔍 捕获{model_type}注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
+                        else:
+                            # 如果捕获的权重无效，使用fallback方法
+                            if self.rank == 0:
+                                print(f"⚠️ 捕获的注意力权重无效，使用fallback方法")
+                            captured_attention = []  # 清空，让代码进入fallback分支
+                    
+                    if not captured_attention:
                         # 如果没有捕获到权重，创建基于latent的注意力模式
                         batch_size, seq_len = latent_model_input.shape[0], latent_model_input.shape[1]
                         context_len = model_kwargs.get('context', {}).get('context', torch.zeros(1, 77, 512)).shape[1]
