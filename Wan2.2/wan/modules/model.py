@@ -1,5 +1,6 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import math
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -153,12 +154,13 @@ class WanSelfAttention(nn.Module):
 
 class WanCrossAttention(WanSelfAttention):
 
-    def forward(self, x, context, context_lens):
+    def forward(self, x, context, context_lens, return_attention=False):
         r"""
         Args:
             x(Tensor): Shape [B, L1, C]
             context(Tensor): Shape [B, L2, C]
             context_lens(Tensor): Shape [B]
+            return_attention(bool): Whether to return attention weights
         """
         b, n, d = x.size(0), self.num_heads, self.head_dim
 
@@ -167,13 +169,25 @@ class WanCrossAttention(WanSelfAttention):
         k = self.norm_k(self.k(context)).view(b, -1, n, d)
         v = self.v(context).view(b, -1, n, d)
 
-        # compute attention
-        x = flash_attention(q, k, v, k_lens=context_lens)
+        if return_attention:
+            # 计算attention权重用于可视化
+            scale = 1.0 / np.sqrt(d)
+            scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+            attention_weights = torch.softmax(scores, dim=-1)
+            
+            # 计算输出
+            x = torch.matmul(attention_weights, v)
+            x = x.flatten(2)
+            x = self.o(x)
+            return x, attention_weights
+        else:
+            # compute attention
+            x = flash_attention(q, k, v, k_lens=context_lens)
 
-        # output
-        x = x.flatten(2)
-        x = self.o(x)
-        return x
+            # output
+            x = x.flatten(2)
+            x = self.o(x)
+            return x
 
 
 class WanAttentionBlock(nn.Module):
@@ -221,6 +235,7 @@ class WanAttentionBlock(nn.Module):
         freqs,
         context,
         context_lens,
+        return_attention=False,
     ):
         r"""
         Args:
@@ -243,15 +258,29 @@ class WanAttentionBlock(nn.Module):
             x = x + y * e[2].squeeze(2)
 
         def cross_attn_ffn(x, context, context_lens, e):
-            x = x + self.cross_attn(self.norm3(x), context, context_lens)
+            if return_attention:
+                cross_attn_out, attention_weights = self.cross_attn(
+                    self.norm3(x), context, context_lens, return_attention=True)
+                x = x + cross_attn_out
+            else:
+                x = x + self.cross_attn(self.norm3(x), context, context_lens)
+            
             y = self.ffn(
                 self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
             with torch.amp.autocast('cuda', dtype=torch.float32):
                 x = x + y * e[5].squeeze(2)
-            return x
+            
+            if return_attention:
+                return x, attention_weights
+            else:
+                return x
 
-        x = cross_attn_ffn(x, context, context_lens, e)
-        return x
+        if return_attention:
+            x, attention_weights = cross_attn_ffn(x, context, context_lens, e)
+            return x, attention_weights
+        else:
+            x = cross_attn_ffn(x, context, context_lens, e)
+            return x
 
 
 class Head(nn.Module):
