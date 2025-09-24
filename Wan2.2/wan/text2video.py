@@ -624,8 +624,9 @@ class WanT2V:
         self.attention_weights_history = []
         
         if self.attention_visualizer is None:
+            # 使用low_noise_model作为主要的模型组件
             self.attention_visualizer = AttentionVisualizer(
-                self.unet, self.text_encoder, self.device
+                self.low_noise_model, self.text_encoder, self.device
             )
         
         # 创建输出目录
