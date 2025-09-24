@@ -316,7 +316,7 @@ class WanT2V:
                 print("🔍 注意力可视化已启用")
                 print(f"   输出目录: {attention_output_dir}")
                 print("   将生成平均Cross Attention Map")
-            self.enable_attention_visualization(attention_output_dir)
+            self._enable_attention_visualization(attention_output_dir)
             self.attention_weights_history = []  # 存储每步的注意力权重
         else:
             if self.rank == 0:
@@ -618,7 +618,7 @@ class WanT2V:
         }
         return result_videos, timing_info
     
-    def enable_attention_visualization(self, output_dir: str = "attention_outputs"):
+    def _enable_attention_visualization(self, output_dir: str = "attention_outputs"):
         """启用注意力可视化功能"""
         self.enable_attention_visualization = True
         self.attention_weights_history = []
