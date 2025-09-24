@@ -239,6 +239,18 @@ def _parse_args():
         action="store_true",
         default=False,
         help="Enable half-frame generation: first expert generates half frames, then duplicate to full frames.")
+    
+    # Attention visualization parameters
+    parser.add_argument(
+        "--enable_attention_visualization",
+        action="store_true",
+        default=False,
+        help="Enable attention visualization: generate average cross attention map.")
+    parser.add_argument(
+        "--attention_output_dir",
+        type=str,
+        default="attention_outputs",
+        help="Directory to save attention visualization outputs.")
 
     # following args only works for s2v
     parser.add_argument(
@@ -473,6 +485,8 @@ def generate(args):
             cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps,
             output_dir=str(run_folder),
             enable_half_frame_generation=args.enable_half_frame_generation,
+            enable_attention_visualization=args.enable_attention_visualization,
+            attention_output_dir=args.attention_output_dir,
 )
         total_inference_time = time.time() - inference_start
         
