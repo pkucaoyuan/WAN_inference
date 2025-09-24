@@ -64,6 +64,13 @@ model.disable_attention_visualization()
 # 运行完整示例
 python example_attention_visualization.py
 
+# 运行参数控制示例
+python example_parameter_control.py
+
+# 使用命令行工具
+python run_with_attention.py --prompt "A beautiful sunset" --enable-attention
+python run_with_attention.py --prompt "A cat playing" --frames 8 --steps 10
+
 # 运行测试脚本
 python test_attention_visualization.py --test_mode
 
@@ -115,6 +122,45 @@ python test_attention_visualization.py --prompt "A person walking through a fore
 - `guide_scale` (float): CFG引导尺度，默认5.0
 - `enable_attention_visualization` (bool): 是否启用注意力可视化，默认False
 - `attention_output_dir` (str): 注意力可视化输出目录，默认"attention_outputs"
+
+### 参数控制示例
+
+#### 禁用注意力可视化（默认）
+```python
+video, timing_info = model.generate(
+    input_prompt="A beautiful sunset",
+    frame_num=16,
+    size=(256, 256),
+    sampling_steps=25,
+    guide_scale=7.5
+    # enable_attention_visualization=False  # 默认值
+)
+```
+
+#### 启用注意力可视化
+```python
+video, timing_info = model.generate(
+    input_prompt="A beautiful sunset",
+    frame_num=16,
+    size=(256, 256),
+    sampling_steps=25,
+    guide_scale=7.5,
+    enable_attention_visualization=True,  # 启用
+    attention_output_dir="my_attention_outputs"  # 自定义输出目录
+)
+```
+
+#### 命令行控制
+```bash
+# 禁用注意力可视化
+python run_with_attention.py --prompt "A beautiful sunset"
+
+# 启用注意力可视化
+python run_with_attention.py --prompt "A beautiful sunset" --enable-attention
+
+# 自定义参数
+python run_with_attention.py --prompt "A cat playing" --frames 8 --steps 10 --enable-attention --attention-dir "my_outputs"
+```
 
 ## 注意事项
 
