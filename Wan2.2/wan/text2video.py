@@ -113,11 +113,11 @@ class WanT2V:
             model = WanModel.from_pretrained(checkpoint_dir, subfolder=subfolder)
             return self._configure_model(
                 model=model,
-                use_sp=use_sp,
-                dit_fsdp=dit_fsdp,
-                shard_fn=shard_fn,
-                convert_model_dtype=convert_model_dtype)
-        
+            use_sp=use_sp,
+            dit_fsdp=dit_fsdp,
+            shard_fn=shard_fn,
+            convert_model_dtype=convert_model_dtype)
+
         # 多GPU环境下需要同步加载以避免竞争
         if dit_fsdp or use_sp:
             # 分布式环境：只有rank 0加载，然后广播
@@ -329,7 +329,7 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
-            F = frame_num
+        F = frame_num
             
         # 计算减半后的target_shape和seq_len（用于高噪声专家）
         half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
@@ -342,11 +342,11 @@ class WanT2V:
         
         # 计算完整帧数的target_shape和seq_len（用于低噪声专家）
         full_target_shape = (self.vae.model.z_dim, (frame_num - 1) // self.vae_stride[0] + 1,
-                            size[1] // self.vae_stride[1],
-                            size[0] // self.vae_stride[2])
+                        size[1] // self.vae_stride[1],
+                        size[0] // self.vae_stride[2])
 
         full_seq_len = math.ceil((full_target_shape[2] * full_target_shape[3]) /
-                                (self.patch_size[1] * self.patch_size[2]) *
+                            (self.patch_size[1] * self.patch_size[2]) *
                                 full_target_shape[1] / self.sp_size) * self.sp_size
 
         if n_prompt == "":
@@ -477,8 +477,8 @@ class WanT2V:
                         model, latent_model_input, timestep, model_kwargs_null, step_idx)
                     
                     # CFG引导
-                    noise_pred = noise_pred_uncond + sample_guide_scale * (
-                        noise_pred_cond - noise_pred_uncond)
+                noise_pred = noise_pred_uncond + sample_guide_scale * (
+                    noise_pred_cond - noise_pred_uncond)
                 # 使用scheduler进行去噪步骤
                 temp_x0 = sample_scheduler.step(
                     noise_pred.unsqueeze(0),
@@ -569,7 +569,7 @@ class WanT2V:
                 
                 # 更新latents（在帧数补全之后）
                 latents = [temp_x0.squeeze(0)]
-                
+
                 # 记录每步推理时间
                 step_end_time = time.time()
                 step_duration = step_end_time - step_start_time
@@ -587,13 +587,13 @@ class WanT2V:
         if self.rank == 0:
             print(f"✅ 推理完成: {len(self.step_timings)}步")
         # 解码latents为视频
-        x0 = latents
-        if offload_model:
-            self.low_noise_model.cpu()
-            self.high_noise_model.cpu()
-            torch.cuda.empty_cache()
-        if self.rank == 0:
-            videos = self.vae.decode(x0)
+            x0 = latents
+            if offload_model:
+                self.low_noise_model.cpu()
+                self.high_noise_model.cpu()
+                torch.cuda.empty_cache()
+            if self.rank == 0:
+                videos = self.vae.decode(x0)
 
         del noise, latents
         del sample_scheduler
@@ -754,7 +754,7 @@ class WanT2V:
                                     attention_weights = torch.softmax(similarity, dim=-1)
                                     captured_attention.append(attention_weights)
                 
-                # 注册hook到所有attention block
+                # 注册hook到当前使用的模型的所有attention block
                 hooks = []
                 for name, module in model.named_modules():
                     if 'attention_block' in name.lower() and hasattr(module, 'cross_attn'):
@@ -771,7 +771,9 @@ class WanT2V:
                         attention_weights = captured_attention[0]
                         self.attention_weights_history.append(attention_weights)
                         if self.rank == 0:
-                            print(f"🔍 捕获真实注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
+                            # 显示当前使用的模型类型
+                            model_type = "高噪声专家" if timestep.item() >= self.boundary * self.num_train_timesteps else "低噪声专家"
+                            print(f"🔍 捕获{model_type}注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
                     else:
                         # 如果没有捕获到权重，创建基于latent的注意力模式
                         batch_size, seq_len = latent_model_input.shape[0], latent_model_input.shape[1]
@@ -790,7 +792,9 @@ class WanT2V:
                         
                         self.attention_weights_history.append(attention_weights)
                         if self.rank == 0:
-                            print(f"🔍 生成基于特征的注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
+                            # 显示当前使用的模型类型
+                            model_type = "高噪声专家" if timestep.item() >= self.boundary * self.num_train_timesteps else "低噪声专家"
+                            print(f"🔍 生成{model_type}基于特征的注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
                     
                     return result
                     
