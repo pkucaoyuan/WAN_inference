@@ -312,8 +312,15 @@ class WanT2V:
         
         # 初始化注意力可视化
         if enable_attention_visualization:
+            if self.rank == 0:
+                print("🔍 注意力可视化已启用")
+                print(f"   输出目录: {attention_output_dir}")
+                print("   将生成平均Cross Attention Map")
             self.enable_attention_visualization(attention_output_dir)
             self.attention_weights_history = []  # 存储每步的注意力权重
+        else:
+            if self.rank == 0:
+                print("📝 注意力可视化已禁用")
         
         # 帧数减半优化：第一个专家只生成一半帧数
         original_frame_num = frame_num
@@ -598,6 +605,9 @@ class WanT2V:
 
         # 生成注意力可视化
         if enable_attention_visualization and hasattr(self, 'attention_weights_history') and self.attention_weights_history:
+            if self.rank == 0:
+                print(f"\n🎨 开始生成注意力可视化...")
+                print(f"   捕获的步骤数: {len(self.attention_weights_history)}")
             self._create_attention_visualizations(input_prompt)
 
         # 返回结果和时间信息
@@ -760,7 +770,7 @@ class WanT2V:
                         attention_weights = captured_attention[0]
                         self.attention_weights_history.append(attention_weights)
                         if self.rank == 0:
-                            print(f"捕获真实注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
+                            print(f"🔍 捕获真实注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
                     else:
                         # 如果没有捕获到权重，创建基于latent的注意力模式
                         batch_size, seq_len = latent_model_input.shape[0], latent_model_input.shape[1]
@@ -779,7 +789,7 @@ class WanT2V:
                         
                         self.attention_weights_history.append(attention_weights)
                         if self.rank == 0:
-                            print(f"生成基于特征的注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
+                            print(f"🔍 生成基于特征的注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
                     
                     return result
                     
