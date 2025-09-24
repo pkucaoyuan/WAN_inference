@@ -774,6 +774,14 @@ class WanT2V:
                         # 使用第一个捕获的权重（通常是主要的cross attention）
                         attention_weights = captured_attention[0]
                         
+                        # 调试信息
+                        if self.rank == 0:
+                            print(f"🔍 调试: captured_attention类型: {type(captured_attention[0])}")
+                            if hasattr(captured_attention[0], 'shape'):
+                                print(f"🔍 调试: 第一个权重形状: {captured_attention[0].shape}")
+                            else:
+                                print(f"🔍 调试: 第一个权重不是张量: {captured_attention[0]}")
+                        
                         # 确保attention_weights是张量
                         if isinstance(attention_weights, list):
                             # 如果是列表，取第一个元素
@@ -822,6 +830,8 @@ class WanT2V:
                         
             except Exception as e:
                 print(f"注意力捕获失败: {e}")
+                import traceback
+                print(f"详细错误信息: {traceback.format_exc()}")
                 return model(latent_model_input, timestep, **model_kwargs)[0]
         else:
             return model(latent_model_input, timestep, **model_kwargs)[0]
