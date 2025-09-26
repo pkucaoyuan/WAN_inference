@@ -808,14 +808,26 @@ class WanT2V:
                             latent_tensor = latent_model_input
                             
                         batch_size, seq_len = latent_tensor.shape[0], latent_tensor.shape[1]
-                        context_len = model_kwargs.get('context', {}).get('context', torch.zeros(1, 77, 512)).shape[1]
+                        
+                        # 安全获取context信息
+                        context = model_kwargs.get('context', [])
+                        if isinstance(context, list) and len(context) > 0:
+                            context_tensor = context[0]  # 取第一个context
+                            context_len = context_tensor.shape[1]
+                        else:
+                            # 使用默认值
+                            context_len = 77
+                            context_tensor = torch.zeros(1, context_len, 512, device=latent_tensor.device)
                         
                         # 基于latent特征创建注意力模式
                         latent_features = latent_tensor.view(batch_size, seq_len, -1)
-                        context_features = model_kwargs.get('context', {}).get('context', torch.zeros(1, context_len, 512))
+                        
+                        # 确保context_features形状正确
+                        if context_tensor.shape[0] != batch_size:
+                            context_tensor = context_tensor.expand(batch_size, -1, -1)
                         
                         # 计算特征相似度
-                        similarity = torch.matmul(latent_features, context_features.transpose(-2, -1))
+                        similarity = torch.matmul(latent_features, context_tensor.transpose(-2, -1))
                         attention_weights = torch.softmax(similarity, dim=-1)
                         
                         # 添加注意力头维度
