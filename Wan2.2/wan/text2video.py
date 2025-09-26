@@ -801,11 +801,17 @@ class WanT2V:
                     
                     if not captured_attention:
                         # 如果没有捕获到权重，创建基于latent的注意力模式
-                        batch_size, seq_len = latent_model_input.shape[0], latent_model_input.shape[1]
+                        # latent_model_input 是一个列表，需要取第一个元素
+                        if isinstance(latent_model_input, list):
+                            latent_tensor = latent_model_input[0]
+                        else:
+                            latent_tensor = latent_model_input
+                            
+                        batch_size, seq_len = latent_tensor.shape[0], latent_tensor.shape[1]
                         context_len = model_kwargs.get('context', {}).get('context', torch.zeros(1, 77, 512)).shape[1]
                         
                         # 基于latent特征创建注意力模式
-                        latent_features = latent_model_input.view(batch_size, seq_len, -1)
+                        latent_features = latent_tensor.view(batch_size, seq_len, -1)
                         context_features = model_kwargs.get('context', {}).get('context', torch.zeros(1, context_len, 512))
                         
                         # 计算特征相似度
