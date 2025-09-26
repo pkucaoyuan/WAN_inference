@@ -826,6 +826,19 @@ class WanT2V:
                         if context_tensor.shape[0] != batch_size:
                             context_tensor = context_tensor.expand(batch_size, -1, -1)
                         
+                        # 调整维度以匹配矩阵乘法要求
+                        latent_dim = latent_features.shape[-1]  # 获取latent特征维度
+                        context_dim = context_tensor.shape[-1]  # 获取context特征维度
+                        
+                        # 如果维度不匹配，使用线性变换对齐
+                        if latent_dim != context_dim:
+                            # 创建简单的线性变换层来对齐维度
+                            if not hasattr(self, '_dim_align_layer'):
+                                self._dim_align_layer = torch.nn.Linear(latent_dim, context_dim, device=latent_tensor.device)
+                            
+                            # 对齐latent特征维度
+                            latent_features = self._dim_align_layer(latent_features)
+                        
                         # 计算特征相似度
                         similarity = torch.matmul(latent_features, context_tensor.transpose(-2, -1))
                         attention_weights = torch.softmax(similarity, dim=-1)
