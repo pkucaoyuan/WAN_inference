@@ -773,8 +773,9 @@ class WanT2V:
                     print(f"🔍 cross_attn支持return_attention: {hasattr(module.cross_attn, 'return_attention')}")
         
         try:
-            # 调用模型
-            result = model(latent_model_input, timestep, **model_kwargs)[0]
+            # 调用模型，传递return_attention=True以获取attention权重
+            model_kwargs_with_attention = {**model_kwargs, 'return_attention': True}
+            result = model(latent_model_input, timestep, **model_kwargs_with_attention)[0]
             
             # 处理捕获的attention权重
             if captured_attention:
