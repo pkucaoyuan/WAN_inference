@@ -775,8 +775,16 @@ class WanT2V:
         # 注册hook到当前使用的模型的所有attention block
         hooks = []
         attention_blocks_found = 0
+        
+        # 先打印所有模块名称，方便调试
+        if self.rank == 0:
+            print(f"🔍 模型中的所有模块:")
+            for name, module in model.named_modules():
+                if hasattr(module, 'cross_attn'):
+                    print(f"   - {name} ({module.__class__.__name__}) - 有cross_attn")
+        
         for name, module in model.named_modules():
-            if 'attention_block' in name.lower() and hasattr(module, 'cross_attn'):
+            if hasattr(module, 'cross_attn'): # 简化条件
                 hook = module.register_forward_hook(attention_hook)
                 hooks.append(hook)
                 attention_blocks_found += 1
