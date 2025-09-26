@@ -329,7 +329,7 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
-            F = frame_num
+        F = frame_num
             
         # 计算减半后的target_shape和seq_len（用于高噪声专家）
         half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
@@ -741,9 +741,20 @@ class WanT2V:
                     if len(input) >= 7:
                         x, e, seq_lens, grid_sizes, freqs, context, context_lens = input[:7]
                         
-                        # 直接调用cross_attn以获取attention权重
-                        cross_attn_out, attention_weights = module.cross_attn(
-                            module.norm3(x), context, context_lens, return_attention=True)
+                        # 直接计算attention权重，不依赖模型的return_attention参数
+                        # 使用WanCrossAttention的内部逻辑
+                        cross_attn = module.cross_attn
+                        b, n, d = x.size(0), cross_attn.num_heads, cross_attn.head_dim
+                        
+                        # 计算Q, K, V
+                        q = cross_attn.norm_q(cross_attn.q(module.norm3(x))).view(b, -1, n, d)
+                        k = cross_attn.norm_k(cross_attn.k(context)).view(b, -1, n, d)
+                        v = cross_attn.v(context).view(b, -1, n, d)
+                        
+                        # 计算attention权重
+                        scale = 1.0 / (d ** 0.5)
+                        scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+                        attention_weights = torch.softmax(scores, dim=-1)
                         
                         # 确保attention_weights是张量
                         if isinstance(attention_weights, torch.Tensor):
@@ -754,7 +765,7 @@ class WanT2V:
                                 print(f"🔍 权重范围: {attention_weights.min():.4f} - {attention_weights.max():.4f}")
                     else:
                         if self.rank == 0:
-                            print(f"⚠️ 输入参数不足，无法调用cross_attn")
+                            print(f"⚠️ 输入参数不足，无法计算cross_attn")
                 except Exception as e:
                     if self.rank == 0:
                         print(f"⚠️ 无法获取真实attention权重: {e}")
