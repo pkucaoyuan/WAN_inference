@@ -329,7 +329,7 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
-            F = frame_num
+        F = frame_num
             
         # 计算减半后的target_shape和seq_len（用于高噪声专家）
         half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
@@ -798,13 +798,11 @@ class WanT2V:
             print(f"🔍 注册了 {len(hooks)} 个hook")
         
         try:
-            # 调用模型，传递return_attention=True以获取attention权重
-            model_kwargs_with_attention = {**model_kwargs, 'return_attention': True}
+            # 调用模型，不传递return_attention参数
             if self.rank == 0:
-                print(f"🔍 调用模型参数: {list(model_kwargs_with_attention.keys())}")
-                print(f"🔍 return_attention: {model_kwargs_with_attention.get('return_attention', 'NOT_SET')}")
+                print(f"🔍 调用模型参数: {list(model_kwargs.keys())}")
             
-            result = model(latent_model_input, timestep, **model_kwargs_with_attention)[0]
+            result = model(latent_model_input, timestep, **model_kwargs)[0]
             
             # 处理捕获的attention权重
             if self.rank == 0:

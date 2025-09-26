@@ -154,7 +154,7 @@ class WanSelfAttention(nn.Module):
 
 class WanCrossAttention(WanSelfAttention):
 
-    def forward(self, x, context, context_lens, return_attention=False):
+    def forward(self, x, context, context_lens):
         r"""
         Args:
             x(Tensor): Shape [B, L1, C]
@@ -169,33 +169,13 @@ class WanCrossAttention(WanSelfAttention):
         k = self.norm_k(self.k(context)).view(b, -1, n, d)
         v = self.v(context).view(b, -1, n, d)
 
-        if return_attention:
-            # 计算attention权重用于可视化
-            scale = 1.0 / np.sqrt(d)
-            scores = torch.matmul(q, k.transpose(-2, -1)) * scale
-            attention_weights = torch.softmax(scores, dim=-1)
-            
-            # 调试信息
-            print(f"🔍 WanCrossAttention: 计算attention权重")
-            print(f"   - Q形状: {q.shape}")
-            print(f"   - K形状: {k.shape}")
-            print(f"   - V形状: {v.shape}")
-            print(f"   - attention_weights形状: {attention_weights.shape}")
-            print(f"   - 权重范围: {attention_weights.min():.4f} - {attention_weights.max():.4f}")
-            
-            # 计算输出
-            x = torch.matmul(attention_weights, v)
-            x = x.flatten(2)
-            x = self.o(x)
-            return x, attention_weights
-        else:
-            # compute attention
-            x = flash_attention(q, k, v, k_lens=context_lens)
+        # compute attention
+        x = flash_attention(q, k, v, k_lens=context_lens)
 
-            # output
-            x = x.flatten(2)
-            x = self.o(x)
-            return x
+        # output
+        x = x.flatten(2)
+        x = self.o(x)
+        return x
 
 
 class WanAttentionBlock(nn.Module):
@@ -243,7 +223,6 @@ class WanAttentionBlock(nn.Module):
         freqs,
         context,
         context_lens,
-        return_attention=False,
     ):
         r"""
         Args:
@@ -266,31 +245,17 @@ class WanAttentionBlock(nn.Module):
             x = x + y * e[2].squeeze(2)
 
         def cross_attn_ffn(x, context, context_lens, e):
-            if return_attention:
-                cross_attn_out, attention_weights = self.cross_attn(
-                    self.norm3(x), context, context_lens, return_attention=True)
-                x = x + cross_attn_out
-                # 调试信息
-                print(f"🔍 WanAttentionBlock: 返回attention权重, 形状: {attention_weights.shape}")
-            else:
-                x = x + self.cross_attn(self.norm3(x), context, context_lens)
+            x = x + self.cross_attn(self.norm3(x), context, context_lens)
             
             y = self.ffn(
                 self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
             with torch.amp.autocast('cuda', dtype=torch.float32):
                 x = x + y * e[5].squeeze(2)
             
-            if return_attention:
-                return x, attention_weights
-            else:
-                return x
-
-        if return_attention:
-            x, attention_weights = cross_attn_ffn(x, context, context_lens, e)
-            return x, attention_weights
-        else:
-            x = cross_attn_ffn(x, context, context_lens, e)
             return x
+
+        x = cross_attn_ffn(x, context, context_lens, e)
+        return x
 
 
 class Head(nn.Module):
@@ -448,7 +413,6 @@ class WanModel(ModelMixin, ConfigMixin):
         context,
         seq_len,
         y=None,
-        return_attention=False,
     ):
         r"""
         Forward pass through the diffusion model
@@ -519,8 +483,7 @@ class WanModel(ModelMixin, ConfigMixin):
             grid_sizes=grid_sizes,
             freqs=self.freqs,
             context=context,
-            context_lens=context_lens,
-            return_attention=return_attention)
+            context_lens=context_lens)
 
         for block in self.blocks:
             x = block(x, **kwargs)
