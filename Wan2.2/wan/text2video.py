@@ -735,6 +735,16 @@ class WanT2V:
             # 检查是否是WanAttentionBlock模块
             if hasattr(module, 'cross_attn') and hasattr(module.cross_attn, 'forward'):
                 try:
+                    # 调试信息：打印输入参数
+                    if self.rank == 0:
+                        print(f"🔍 Hook被调用 - 模块: {module.__class__.__name__}")
+                        print(f"🔍 输入参数数量: {len(input) if input else 0}")
+                        for i, inp in enumerate(input):
+                            if hasattr(inp, 'shape'):
+                                print(f"🔍 输入[{i}] 形状: {inp.shape}")
+                            else:
+                                print(f"🔍 输入[{i}] 类型: {type(inp)}")
+                    
                     # 从input中提取参数
                     # input[0] = x, input[1] = e, input[2] = seq_lens, input[3] = grid_sizes, 
                     # input[4] = freqs, input[5] = context, input[6] = context_lens
@@ -766,6 +776,7 @@ class WanT2V:
                     else:
                         if self.rank == 0:
                             print(f"⚠️ 输入参数不足，无法计算cross_attn")
+                            print(f"⚠️ 期望7个参数，实际得到{len(input)}个")
                 except Exception as e:
                     if self.rank == 0:
                         print(f"⚠️ 无法获取真实attention权重: {e}")
