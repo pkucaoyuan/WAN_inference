@@ -735,27 +735,26 @@ class WanT2V:
             # 检查是否是WanAttentionBlock模块
             if hasattr(module, 'cross_attn') and hasattr(module.cross_attn, 'forward'):
                 try:
-                    # 检查模块是否支持返回attention权重
-                    if hasattr(module.cross_attn, 'return_attention'):
-                        # 从input中提取参数
-                        # input[0] = x, input[1] = e, input[2] = seq_lens, input[3] = grid_sizes, 
-                        # input[4] = freqs, input[5] = context, input[6] = context_lens
-                        if len(input) >= 7:
-                            x, e, seq_lens, grid_sizes, freqs, context, context_lens = input[:7]
-                            
-                            # 重新调用cross_attn以获取attention权重
-                            cross_attn_out, attention_weights = module.cross_attn(
-                                module.norm3(x), context, context_lens, return_attention=True)
-                            
-                            # 确保attention_weights是张量
-                            if isinstance(attention_weights, torch.Tensor):
-                                captured_attention.append(attention_weights)
-                                if self.rank == 0:
-                                    print(f"🔍 成功捕获真实cross attention权重: {attention_weights.shape}")
-                                    print(f"🔍 模块名称: {module.__class__.__name__}")
-                        else:
+                    # 从input中提取参数
+                    # input[0] = x, input[1] = e, input[2] = seq_lens, input[3] = grid_sizes, 
+                    # input[4] = freqs, input[5] = context, input[6] = context_lens
+                    if len(input) >= 7:
+                        x, e, seq_lens, grid_sizes, freqs, context, context_lens = input[:7]
+                        
+                        # 直接调用cross_attn以获取attention权重
+                        cross_attn_out, attention_weights = module.cross_attn(
+                            module.norm3(x), context, context_lens, return_attention=True)
+                        
+                        # 确保attention_weights是张量
+                        if isinstance(attention_weights, torch.Tensor):
+                            captured_attention.append(attention_weights)
                             if self.rank == 0:
-                                print(f"⚠️ 输入参数不足，无法调用cross_attn")
+                                print(f"🔍 成功捕获真实cross attention权重: {attention_weights.shape}")
+                                print(f"🔍 模块名称: {module.__class__.__name__}")
+                                print(f"🔍 权重范围: {attention_weights.min():.4f} - {attention_weights.max():.4f}")
+                    else:
+                        if self.rank == 0:
+                            print(f"⚠️ 输入参数不足，无法调用cross_attn")
                 except Exception as e:
                     if self.rank == 0:
                         print(f"⚠️ 无法获取真实attention权重: {e}")
