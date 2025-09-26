@@ -763,21 +763,38 @@ class WanT2V:
         
         # 注册hook到当前使用的模型的所有attention block
         hooks = []
+        attention_blocks_found = 0
         for name, module in model.named_modules():
             if 'attention_block' in name.lower() and hasattr(module, 'cross_attn'):
                 hook = module.register_forward_hook(attention_hook)
                 hooks.append(hook)
+                attention_blocks_found += 1
                 if self.rank == 0:
                     print(f"🔍 注册hook到模块: {name} ({module.__class__.__name__})")
                     print(f"🔍 模块有cross_attn: {hasattr(module, 'cross_attn')}")
                     print(f"🔍 cross_attn支持return_attention: {hasattr(module.cross_attn, 'return_attention')}")
         
+        if self.rank == 0:
+            print(f"🔍 总共找到 {attention_blocks_found} 个attention block")
+            print(f"🔍 注册了 {len(hooks)} 个hook")
+        
         try:
             # 调用模型，传递return_attention=True以获取attention权重
             model_kwargs_with_attention = {**model_kwargs, 'return_attention': True}
+            if self.rank == 0:
+                print(f"🔍 调用模型参数: {list(model_kwargs_with_attention.keys())}")
+                print(f"🔍 return_attention: {model_kwargs_with_attention.get('return_attention', 'NOT_SET')}")
+            
             result = model(latent_model_input, timestep, **model_kwargs_with_attention)[0]
             
             # 处理捕获的attention权重
+            if self.rank == 0:
+                print(f"🔍 捕获的attention权重数量: {len(captured_attention)}")
+                if captured_attention:
+                    print(f"🔍 第一个权重类型: {type(captured_attention[0])}")
+                    if hasattr(captured_attention[0], 'shape'):
+                        print(f"🔍 第一个权重形状: {captured_attention[0].shape}")
+            
             if captured_attention:
                 # 使用第一个捕获的权重（通常是主要的cross attention）
                 attention_weights = captured_attention[0]
@@ -785,6 +802,8 @@ class WanT2V:
                 # 确保attention_weights是张量
                 if isinstance(attention_weights, list):
                     attention_weights = attention_weights[0] if attention_weights else None
+                    if self.rank == 0:
+                        print(f"🔍 从列表中提取权重: {type(attention_weights)}")
                 
                 if attention_weights is not None and hasattr(attention_weights, 'shape'):
                     self.attention_weights_history.append(attention_weights)
@@ -792,12 +811,21 @@ class WanT2V:
                         # 显示当前使用的模型类型
                         model_type = "高噪声专家" if timestep.item() >= self.boundary * self.num_train_timesteps else "低噪声专家"
                         print(f"🔍 捕获{model_type}真实注意力权重 - Step {step_idx+1}, Shape: {attention_weights.shape}")
+                        print(f"🔍 权重范围: {attention_weights.min():.4f} - {attention_weights.max():.4f}")
                 else:
                     if self.rank == 0:
                         print(f"⚠️ 捕获的注意力权重无效，跳过Step {step_idx+1}")
+                        print(f"⚠️ 权重类型: {type(attention_weights)}")
+                        print(f"⚠️ 权重是否为None: {attention_weights is None}")
+                        if attention_weights is not None:
+                            print(f"⚠️ 权重是否有shape属性: {hasattr(attention_weights, 'shape')}")
             else:
                 if self.rank == 0:
                     print(f"⚠️ 未捕获到真实attention权重，跳过Step {step_idx+1}")
+                    print(f"⚠️ 可能原因:")
+                    print(f"   - 模型不支持return_attention参数")
+                    print(f"   - Hook没有正确注册")
+                    print(f"   - WanAttentionBlock没有返回attention权重")
             
             return result
             

@@ -175,6 +175,14 @@ class WanCrossAttention(WanSelfAttention):
             scores = torch.matmul(q, k.transpose(-2, -1)) * scale
             attention_weights = torch.softmax(scores, dim=-1)
             
+            # 调试信息
+            print(f"🔍 WanCrossAttention: 计算attention权重")
+            print(f"   - Q形状: {q.shape}")
+            print(f"   - K形状: {k.shape}")
+            print(f"   - V形状: {v.shape}")
+            print(f"   - attention_weights形状: {attention_weights.shape}")
+            print(f"   - 权重范围: {attention_weights.min():.4f} - {attention_weights.max():.4f}")
+            
             # 计算输出
             x = torch.matmul(attention_weights, v)
             x = x.flatten(2)
@@ -262,6 +270,8 @@ class WanAttentionBlock(nn.Module):
                 cross_attn_out, attention_weights = self.cross_attn(
                     self.norm3(x), context, context_lens, return_attention=True)
                 x = x + cross_attn_out
+                # 调试信息
+                print(f"🔍 WanAttentionBlock: 返回attention权重, 形状: {attention_weights.shape}")
             else:
                 x = x + self.cross_attn(self.norm3(x), context, context_lens)
             
