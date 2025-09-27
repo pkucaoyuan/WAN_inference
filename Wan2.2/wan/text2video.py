@@ -769,8 +769,13 @@ class WanT2V:
                         scale = 1.0 / (d ** 0.5)
                         
                         # 计算attention scores
-                        # q: [b, 3600, n, d], k: [b, 512, n, d]
-                        # scores: [b, n, 3600, 512]
+                        # q: [1, 3600, 40, 128], k: [1, 512, 40, 128]
+                        # 需要重新排列维度以正确计算attention
+                        # 将q和k重新排列为 [b, n, seq_len, d] 格式
+                        q = q.transpose(1, 2)  # [1, 40, 3600, 128]
+                        k = k.transpose(1, 2)  # [1, 40, 512, 128]
+                        
+                        # 现在计算scores: [1, 40, 3600, 128] @ [1, 40, 128, 512] = [1, 40, 3600, 512]
                         try:
                             scores = torch.matmul(q, k.transpose(-2, -1)) * scale
                             if self.rank == 0:
@@ -786,7 +791,7 @@ class WanT2V:
                         # 处理变长序列：使用context_lens来mask
                         if context_lens is not None:
                             # 创建mask: [b, 1, 1, 512]
-                            max_len = k.size(1)  # 512
+                            max_len = k.size(2)  # 512 (k现在是[b, n, seq_len, d])
                             mask = torch.arange(max_len, device=k.device).expand(b, max_len) < context_lens.unsqueeze(1)
                             mask = mask.unsqueeze(1).unsqueeze(1)  # [b, 1, 1, 512]
                             
