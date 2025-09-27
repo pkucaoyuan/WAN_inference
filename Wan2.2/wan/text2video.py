@@ -538,18 +538,35 @@ class WanT2V:
                 if enable_improved_frame_completion and is_high_noise_phase and step_idx == max(high_noise_steps):
                     if self.rank == 0:
                         print(f"🔄 高噪声专家结束，开始改进帧数补全: 模拟半帧生成，替换偶数帧")
+                        print(f"🔍 调试信息: enable_improved_frame_completion={enable_improved_frame_completion}")
+                        print(f"🔍 调试信息: is_high_noise_phase={is_high_noise_phase}")
+                        print(f"🔍 调试信息: step_idx={step_idx}, max(high_noise_steps)={max(high_noise_steps)}")
                     
                     # 当前是完整帧数，模拟半帧生成的效果
                     current_frames = latents[0].shape[1]  # 当前完整帧数
                     
+                    if self.rank == 0:
+                        print(f"🔍 当前帧数: {current_frames}")
+                        print(f"🔍 开始替换偶数帧...")
+                    
                     # 改进的帧数补全：偶数帧复制前一个奇数帧（模拟半帧生成效果）
+                    replaced_count = 0
                     for i in range(0, current_frames, 2):  # 只处理偶数帧
                         if i > 0:  # 跳过第0帧
+                            # 保存原始值用于对比
+                            original_value = latents[0][:, i, :, :].clone()
                             # 偶数帧复制前一个奇数帧
                             latents[0][:, i, :, :] = latents[0][:, i-1, :, :]
+                            # 检查是否真的替换了
+                            if not torch.equal(original_value, latents[0][:, i, :, :]):
+                                replaced_count += 1
+                                if self.rank == 0 and replaced_count <= 3:  # 只打印前3个替换
+                                    print(f"🔍 帧{i}已替换: 原始值范围[{original_value.min():.4f}, {original_value.max():.4f}] -> 新值范围[{latents[0][:, i, :, :].min():.4f}, {latents[0][:, i, :, :].max():.4f}]")
                     
                     if self.rank == 0:
-                        print(f"✅ 改进帧数补全完成: 偶数帧已替换为前一个奇数帧的复制")
+                        print(f"✅ 改进帧数补全完成: 共替换了{replaced_count}个偶数帧")
+                        print(f"🔍 最终latents形状: {latents[0].shape}")
+                        print(f"🔍 最终latents值范围: [{latents[0].min():.4f}, {latents[0].max():.4f}]")
                     
                     # 更新seq_len为完整帧数的seq_len（低噪声专家使用）
                     current_seq_len = full_seq_len
