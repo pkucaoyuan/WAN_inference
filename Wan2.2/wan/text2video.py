@@ -1022,8 +1022,9 @@ class WanT2V:
         ax1.set_title('Absolute Error vs Steps')
         ax1.grid(True, alpha=0.3)
         ax1.legend()
-        # 设置x轴刻度为所有步数，并旋转标签避免重叠
-        ax1.set_xticks(steps)
+        # 设置x轴刻度为5的倍数，并旋转标签避免重叠
+        step_ticks = [i for i in range(1, max(steps) + 1, 5)]
+        ax1.set_xticks(step_ticks)
         ax1.tick_params(axis='x', rotation=45)
         
         ax1_twin = ax1.twinx()
@@ -1039,8 +1040,9 @@ class WanT2V:
         ax2.set_title('Conditional vs Unconditional Output')
         ax2.grid(True, alpha=0.3)
         ax2.legend()
-        # 设置x轴刻度为所有步数，并旋转标签避免重叠
-        ax2.set_xticks(steps)
+        # 设置x轴刻度为5的倍数，并旋转标签避免重叠
+        step_ticks = [i for i in range(1, max(steps) + 1, 5)]
+        ax2.set_xticks(step_ticks)
         ax2.tick_params(axis='x', rotation=45)
         
         # 图3: 误差随timestep变化
