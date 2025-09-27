@@ -358,7 +358,7 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
-        F = frame_num
+            F = frame_num
             
         # 计算减半后的target_shape和seq_len（用于高噪声专家）
         half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
