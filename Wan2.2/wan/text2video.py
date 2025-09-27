@@ -1013,53 +1013,52 @@ class WanT2V:
         uncond_means = [data['unconditional_output_mean'] for data in self.error_history]
         
         # 创建图表
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+        fig.suptitle('Error Analysis: Conditional vs Unconditional Model Outputs', fontsize=16, fontweight='bold')
         
-        # 图1: 绝对误差和相对误差
-        ax1.plot(steps, abs_errors, 'b-', label='Absolute Error', linewidth=2)
-        ax1.set_xlabel('Step')
-        ax1.set_ylabel('Absolute Error')
-        ax1.set_title('Absolute Error vs Steps')
+        # 图1: 绝对误差和相对误差随步数变化
+        ax1.plot(steps, abs_errors, 'b-', label='Absolute Error', linewidth=2.5, marker='o', markersize=4)
+        ax1.set_xlabel('Denoising Step', fontsize=12)
+        ax1.set_ylabel('Absolute Error', fontsize=12, color='blue')
+        ax1.set_title('Absolute and Relative Error vs Denoising Steps', fontsize=14, fontweight='bold')
         ax1.grid(True, alpha=0.3)
-        ax1.legend()
-        # 设置x轴刻度为5的倍数，并旋转标签避免重叠
+        ax1.legend(loc='upper left', fontsize=10)
+        # 设置x轴刻度为5的倍数
         step_ticks = [i for i in range(1, max(steps) + 1, 5)]
         ax1.set_xticks(step_ticks)
-        ax1.tick_params(axis='x', rotation=45)
         
         ax1_twin = ax1.twinx()
-        ax1_twin.plot(steps, rel_errors, 'r-', label='Relative Error', linewidth=2)
-        ax1_twin.set_ylabel('Relative Error')
-        ax1_twin.legend(loc='upper right')
+        ax1_twin.plot(steps, rel_errors, 'r-', label='Relative Error', linewidth=2.5, marker='s', markersize=4)
+        ax1_twin.set_ylabel('Relative Error', fontsize=12, color='red')
+        ax1_twin.legend(loc='upper right', fontsize=10)
         
         # 图2: 条件输出 vs 无条件输出
-        ax2.plot(steps, cond_means, 'g-', label='Conditional Output', linewidth=2)
-        ax2.plot(steps, uncond_means, 'orange', label='Unconditional Output', linewidth=2)
-        ax2.set_xlabel('Step')
-        ax2.set_ylabel('Output Mean')
-        ax2.set_title('Conditional vs Unconditional Output')
+        ax2.plot(steps, cond_means, 'g-', label='Conditional Output', linewidth=2.5, marker='^', markersize=4)
+        ax2.plot(steps, uncond_means, 'orange', label='Unconditional Output', linewidth=2.5, marker='v', markersize=4)
+        ax2.set_xlabel('Denoising Step', fontsize=12)
+        ax2.set_ylabel('Output Mean Value', fontsize=12)
+        ax2.set_title('Conditional vs Unconditional Output Comparison', fontsize=14, fontweight='bold')
         ax2.grid(True, alpha=0.3)
-        ax2.legend()
-        # 设置x轴刻度为5的倍数，并旋转标签避免重叠
+        ax2.legend(loc='best', fontsize=10)
+        # 设置x轴刻度为5的倍数
         step_ticks = [i for i in range(1, max(steps) + 1, 5)]
         ax2.set_xticks(step_ticks)
-        ax2.tick_params(axis='x', rotation=45)
         
-        # 图3: 误差随timestep变化
-        ax3.plot(timesteps, abs_errors, 'b-', label='Absolute Error', linewidth=2)
-        ax3.set_xlabel('Timestep')
-        ax3.set_ylabel('Absolute Error')
-        ax3.set_title('Absolute Error vs Timestep')
+        # 图3: 绝对误差随timestep变化
+        ax3.plot(timesteps, abs_errors, 'b-', label='Absolute Error', linewidth=2.5, marker='o', markersize=4)
+        ax3.set_xlabel('Timestep', fontsize=12)
+        ax3.set_ylabel('Absolute Error', fontsize=12)
+        ax3.set_title('Absolute Error vs Timestep', fontsize=14, fontweight='bold')
         ax3.grid(True, alpha=0.3)
-        ax3.legend()
+        ax3.legend(loc='best', fontsize=10)
         
         # 图4: 相对误差随timestep变化
-        ax4.plot(timesteps, rel_errors, 'r-', label='Relative Error', linewidth=2)
-        ax4.set_xlabel('Timestep')
-        ax4.set_ylabel('Relative Error')
-        ax4.set_title('Relative Error vs Timestep')
+        ax4.plot(timesteps, rel_errors, 'r-', label='Relative Error', linewidth=2.5, marker='s', markersize=4)
+        ax4.set_xlabel('Timestep', fontsize=12)
+        ax4.set_ylabel('Relative Error', fontsize=12)
+        ax4.set_title('Relative Error vs Timestep', fontsize=14, fontweight='bold')
         ax4.grid(True, alpha=0.3)
-        ax4.legend()
+        ax4.legend(loc='best', fontsize=10)
         
         plt.tight_layout()
         
