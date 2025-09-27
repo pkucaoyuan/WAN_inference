@@ -358,7 +358,7 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
-            F = frame_num
+        F = frame_num
             
         # 计算减半后的target_shape和seq_len（用于高噪声专家）
         half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
@@ -534,35 +534,22 @@ class WanT2V:
                     return_dict=False,
                     generator=seed_g)[0]
                 
-                # 改进的帧数补全：在专家切换时进行帧数补全（在scheduler.step之后）
+                # 改进的帧数补全：在专家切换时模拟半帧生成并替换偶数帧
                 if enable_improved_frame_completion and is_high_noise_phase and step_idx == max(high_noise_steps):
                     if self.rank == 0:
-                        print(f"🔄 高噪声专家结束，开始改进帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
+                        print(f"🔄 高噪声专家结束，开始改进帧数补全: 模拟半帧生成，替换偶数帧")
                     
-                    # 计算当前帧数和目标帧数
-                    current_frames = latents[0].shape[1]  # 当前帧数
-                    target_frames = full_target_shape[1]  # 目标帧数
+                    # 当前是完整帧数，模拟半帧生成的效果
+                    current_frames = latents[0].shape[1]  # 当前完整帧数
                     
-                    # 创建新的latents tensor: [C, target_frames, H, W]
-                    new_latents = torch.zeros(
-                        latents[0].shape[0], target_frames, 
-                        latents[0].shape[2], latents[0].shape[3],
-                        device=latents[0].device, dtype=latents[0].dtype
-                    )
+                    # 改进的帧数补全：偶数帧复制前一个奇数帧（模拟半帧生成效果）
+                    for i in range(0, current_frames, 2):  # 只处理偶数帧
+                        if i > 0:  # 跳过第0帧
+                            # 偶数帧复制前一个奇数帧
+                            latents[0][:, i, :, :] = latents[0][:, i-1, :, :]
                     
-                    # 改进的帧数补全：偶数帧复制前一个奇数帧
-                    for i in range(target_frames):
-                        if i % 2 == 0:  # 偶数帧（0, 2, 4, ...）
-                            # 复制前一个奇数帧
-                            source_idx = min(i // 2, current_frames - 1)
-                            new_latents[:, i, :, :] = latents[0][:, source_idx, :, :]
-                        else:  # 奇数帧（1, 3, 5, ...）
-                            # 直接使用对应的帧
-                            source_idx = min(i // 2, current_frames - 1)
-                            new_latents[:, i, :, :] = latents[0][:, source_idx, :, :]
-                    
-                    # 更新latents
-                    latents[0] = new_latents
+                    if self.rank == 0:
+                        print(f"✅ 改进帧数补全完成: 偶数帧已替换为前一个奇数帧的复制")
                     
                     # 更新seq_len为完整帧数的seq_len（低噪声专家使用）
                     current_seq_len = full_seq_len
