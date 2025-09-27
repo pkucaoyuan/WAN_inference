@@ -1016,40 +1016,42 @@ class WanT2V:
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
         
         # 图1: 绝对误差和相对误差
-        ax1.plot(steps, abs_errors, 'b-', label='绝对误差', linewidth=2)
-        ax1.set_xlabel('步数')
-        ax1.set_ylabel('绝对误差')
-        ax1.set_title('绝对误差随步数变化')
+        ax1.plot(steps, abs_errors, 'b-', label='Absolute Error', linewidth=2)
+        ax1.set_xlabel('Step')
+        ax1.set_ylabel('Absolute Error')
+        ax1.set_title('Absolute Error vs Steps')
         ax1.grid(True, alpha=0.3)
         ax1.legend()
+        ax1.set_xticks(steps)  # 设置步数为整数
         
         ax1_twin = ax1.twinx()
-        ax1_twin.plot(steps, rel_errors, 'r-', label='相对误差', linewidth=2)
-        ax1_twin.set_ylabel('相对误差')
+        ax1_twin.plot(steps, rel_errors, 'r-', label='Relative Error', linewidth=2)
+        ax1_twin.set_ylabel('Relative Error')
         ax1_twin.legend(loc='upper right')
         
         # 图2: 条件输出 vs 无条件输出
-        ax2.plot(steps, cond_means, 'g-', label='条件输出', linewidth=2)
-        ax2.plot(steps, uncond_means, 'orange', label='无条件输出', linewidth=2)
-        ax2.set_xlabel('步数')
-        ax2.set_ylabel('输出均值')
-        ax2.set_title('条件输出 vs 无条件输出')
+        ax2.plot(steps, cond_means, 'g-', label='Conditional Output', linewidth=2)
+        ax2.plot(steps, uncond_means, 'orange', label='Unconditional Output', linewidth=2)
+        ax2.set_xlabel('Step')
+        ax2.set_ylabel('Output Mean')
+        ax2.set_title('Conditional vs Unconditional Output')
         ax2.grid(True, alpha=0.3)
         ax2.legend()
+        ax2.set_xticks(steps)  # 设置步数为整数
         
         # 图3: 误差随timestep变化
-        ax3.plot(timesteps, abs_errors, 'b-', label='绝对误差', linewidth=2)
+        ax3.plot(timesteps, abs_errors, 'b-', label='Absolute Error', linewidth=2)
         ax3.set_xlabel('Timestep')
-        ax3.set_ylabel('绝对误差')
-        ax3.set_title('绝对误差随Timestep变化')
+        ax3.set_ylabel('Absolute Error')
+        ax3.set_title('Absolute Error vs Timestep')
         ax3.grid(True, alpha=0.3)
         ax3.legend()
         
         # 图4: 相对误差随timestep变化
-        ax4.plot(timesteps, rel_errors, 'r-', label='相对误差', linewidth=2)
+        ax4.plot(timesteps, rel_errors, 'r-', label='Relative Error', linewidth=2)
         ax4.set_xlabel('Timestep')
-        ax4.set_ylabel('相对误差')
-        ax4.set_title('相对误差随Timestep变化')
+        ax4.set_ylabel('Relative Error')
+        ax4.set_title('Relative Error vs Timestep')
         ax4.grid(True, alpha=0.3)
         ax4.legend()
         
@@ -1081,43 +1083,43 @@ class WanT2V:
         abs_errors = [data['absolute_error_mean'] for data in self.error_history]
         rel_errors = [data['relative_error_mean'] for data in self.error_history]
         
-        report = f"""# 误差分析报告
+        report = f"""# Error Analysis Report
 
-## 基本信息
-- **总步数**: {len(self.error_history)}
-- **输出目录**: {self.error_output_dir}
-- **分析时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+## Basic Information
+- **Total Steps**: {len(self.error_history)}
+- **Output Directory**: {self.error_output_dir}
+- **Analysis Time**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-## 统计摘要
-### 绝对误差
-- **平均值**: {np.mean(abs_errors):.6f}
-- **标准差**: {np.std(abs_errors):.6f}
-- **最大值**: {np.max(abs_errors):.6f}
-- **最小值**: {np.min(abs_errors):.6f}
+## Statistical Summary
+### Absolute Error
+- **Mean**: {np.mean(abs_errors):.6f}
+- **Std Dev**: {np.std(abs_errors):.6f}
+- **Max**: {np.max(abs_errors):.6f}
+- **Min**: {np.min(abs_errors):.6f}
 
-### 相对误差
-- **平均值**: {np.mean(rel_errors):.6f}
-- **标准差**: {np.std(rel_errors):.6f}
-- **最大值**: {np.max(rel_errors):.6f}
-- **最小值**: {np.min(rel_errors):.6f}
+### Relative Error
+- **Mean**: {np.mean(rel_errors):.6f}
+- **Std Dev**: {np.std(rel_errors):.6f}
+- **Max**: {np.max(rel_errors):.6f}
+- **Min**: {np.min(rel_errors):.6f}
 
-## 详细数据
-| 步数 | Timestep | 绝对误差 | 相对误差 | 条件输出均值 | 无条件输出均值 |
-|------|----------|----------|----------|--------------|----------------|
+## Detailed Data
+| Step | Timestep | Absolute Error | Relative Error | Conditional Output Mean | Unconditional Output Mean |
+|------|----------|----------------|----------------|------------------------|---------------------------|
 """
         
         for data in self.error_history:
             report += f"| {data['step']} | {data['timestep']:.1f} | {data['absolute_error_mean']:.6f} | {data['relative_error_mean']:.6f} | {data['conditional_output_mean']:.6f} | {data['unconditional_output_mean']:.6f} |\n"
         
         report += f"""
-## 分析结论
-1. **误差趋势**: 绝对误差和相对误差在去噪过程中的变化模式
-2. **条件影响**: 条件输出与无条件输出的差异程度
-3. **收敛性**: 误差是否随着去噪步骤的进行而收敛
+## Analysis Conclusions
+1. **Error Trend**: Changes in absolute and relative errors during denoising process
+2. **Conditional Impact**: Difference between conditional and unconditional outputs
+3. **Convergence**: Whether errors converge as denoising steps progress
 
-## 生成的文件
-- `error_analysis_plots.png` - 误差分析可视化图表
-- `error_analysis_report.md` - 详细分析报告
+## Generated Files
+- `error_analysis_plots.png` - Error analysis visualization plots
+- `error_analysis_report.md` - Detailed analysis report
 """
         
         # 保存报告
