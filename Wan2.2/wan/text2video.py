@@ -490,10 +490,11 @@ class WanT2V:
                 else:
                     # 正常CFG计算
                     if self.enable_error_analysis:
+                        # 使用误差分析函数，但只记录一次误差
                         noise_pred_cond = self._call_model_with_error_analysis(
-                            model, latent_model_input, timestep, model_kwargs_c, step_idx)
+                            model, latent_model_input, timestep, model_kwargs_c, step_idx, record_error=True)
                         noise_pred_uncond = self._call_model_with_error_analysis(
-                            model, latent_model_input, timestep, model_kwargs_null, step_idx)
+                            model, latent_model_input, timestep, model_kwargs_null, step_idx, record_error=False)
                     else:
                         noise_pred_cond = self._call_model_with_attention_capture(
                             model, latent_model_input, timestep, model_kwargs_c, step_idx)
@@ -905,46 +906,48 @@ class WanT2V:
         self.error_output_dir = error_output_dir
         self.enable_error_analysis = True
 
-    def _call_model_with_error_analysis(self, model, latent_model_input, timestep, model_kwargs, step_idx):
+    def _call_model_with_error_analysis(self, model, latent_model_input, timestep, model_kwargs, step_idx, record_error=True):
         """调用模型并记录误差分析"""
         if not self.enable_error_analysis:
             return model(latent_model_input, timestep, **model_kwargs)[0]
         
-        # 获取条件输出
-        noise_pred_cond = model(latent_model_input, timestep, **model_kwargs)[0]
+        # 获取当前输出
+        current_output = model(latent_model_input, timestep, **model_kwargs)[0]
         
-        # 获取无条件输出（使用空文本）
-        model_kwargs_uncond = model_kwargs.copy()
-        if 'context' in model_kwargs_uncond:
-            # 使用空文本作为无条件输入
-            model_kwargs_uncond['context'] = [torch.zeros_like(ctx) for ctx in model_kwargs['context']]
+        # 只在记录误差时计算和保存误差数据
+        if record_error:
+            # 获取无条件输出（使用空文本）
+            model_kwargs_uncond = model_kwargs.copy()
+            if 'context' in model_kwargs_uncond:
+                # 使用空文本作为无条件输入
+                model_kwargs_uncond['context'] = [torch.zeros_like(ctx) for ctx in model_kwargs['context']]
+            
+            noise_pred_uncond = model(latent_model_input, timestep, **model_kwargs_uncond)[0]
+            
+            # 计算误差
+            absolute_error = torch.abs(current_output - noise_pred_uncond)
+            relative_error = absolute_error / (torch.abs(current_output) + 1e-8)
+            
+            # 记录误差数据
+            error_data = {
+                'step': step_idx + 1,
+                'timestep': timestep.item(),
+                'absolute_error_mean': absolute_error.mean().item(),
+                'absolute_error_std': absolute_error.std().item(),
+                'relative_error_mean': relative_error.mean().item(),
+                'relative_error_std': relative_error.std().item(),
+                'conditional_output_mean': current_output.mean().item(),
+                'conditional_output_std': current_output.std().item(),
+                'unconditional_output_mean': noise_pred_uncond.mean().item(),
+                'unconditional_output_std': noise_pred_uncond.std().item(),
+            }
+            
+            self.error_history.append(error_data)
+            
+            if self.rank == 0:
+                print(f"📊 Step {step_idx+1}: 绝对误差={error_data['absolute_error_mean']:.4f}, 相对误差={error_data['relative_error_mean']:.4f}")
         
-        noise_pred_uncond = model(latent_model_input, timestep, **model_kwargs_uncond)[0]
-        
-        # 计算误差
-        absolute_error = torch.abs(noise_pred_cond - noise_pred_uncond)
-        relative_error = absolute_error / (torch.abs(noise_pred_cond) + 1e-8)
-        
-        # 记录误差数据
-        error_data = {
-            'step': step_idx + 1,
-            'timestep': timestep.item(),
-            'absolute_error_mean': absolute_error.mean().item(),
-            'absolute_error_std': absolute_error.std().item(),
-            'relative_error_mean': relative_error.mean().item(),
-            'relative_error_std': relative_error.std().item(),
-            'conditional_output_mean': noise_pred_cond.mean().item(),
-            'conditional_output_std': noise_pred_cond.std().item(),
-            'unconditional_output_mean': noise_pred_uncond.mean().item(),
-            'unconditional_output_std': noise_pred_uncond.std().item(),
-        }
-        
-        self.error_history.append(error_data)
-        
-        if self.rank == 0:
-            print(f"📊 Step {step_idx+1}: 绝对误差={error_data['absolute_error_mean']:.4f}, 相对误差={error_data['relative_error_mean']:.4f}")
-        
-        return noise_pred_cond
+        return current_output
 
     def _create_error_visualization(self):
         """创建误差分析可视化图表"""
