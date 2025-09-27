@@ -605,18 +605,32 @@ class WanT2V:
                     )
                     
                     # 考虑奇偶性的帧数补全
+                    if self.rank == 0:
+                        print(f"🔍 开始帧数补全: {current_frames}帧 -> {target_frames}帧")
+                    
                     if target_frames % 2 == 0:  # 偶帧：每帧都重复
                         for i in range(current_frames):
                             if i*2 < target_frames:
                                 new_latents[:, i*2, :, :] = latents[0][:, i, :, :]
+                                if self.rank == 0 and i < 3:  # 只打印前3个
+                                    print(f"  帧{i*2} = 原始帧{i}")
                             if i*2+1 < target_frames:
                                 new_latents[:, i*2+1, :, :] = latents[0][:, i, :, :]
+                                if self.rank == 0 and i < 3:  # 只打印前3个
+                                    print(f"  帧{i*2+1} = 原始帧{i} (复制)")
                     else:  # 奇帧：最后一帧不重复
                         for i in range(current_frames):
                             if i*2 < target_frames:
                                 new_latents[:, i*2, :, :] = latents[0][:, i, :, :]
+                                if self.rank == 0 and i < 3:  # 只打印前3个
+                                    print(f"  帧{i*2} = 原始帧{i}")
                             if i*2+1 < target_frames:
                                 new_latents[:, i*2+1, :, :] = latents[0][:, i, :, :]
+                                if self.rank == 0 and i < 3:  # 只打印前3个
+                                    print(f"  帧{i*2+1} = 原始帧{i} (复制)")
+                    
+                    if self.rank == 0:
+                        print(f"🔍 帧数补全完成: 每帧都复制一次")
                     
                     # 更新latents
                     latents[0] = new_latents
