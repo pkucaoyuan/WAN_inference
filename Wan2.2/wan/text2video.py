@@ -758,6 +758,12 @@ class WanT2V:
                         k = module.norm_k(module.k(context)).view(b, -1, n, d)
                         v = module.v(context).view(b, -1, n, d)
                         
+                        # 调试信息：打印Q, K的形状
+                        if self.rank == 0:
+                            print(f"🔍 Q形状: {q.shape}")
+                            print(f"🔍 K形状: {k.shape}")
+                            print(f"🔍 V形状: {v.shape}")
+                        
                         # 使用标准的attention计算，而不是flash_attention
                         # 因为我们需要获取attention权重
                         scale = 1.0 / (d ** 0.5)
@@ -765,7 +771,17 @@ class WanT2V:
                         # 计算attention scores
                         # q: [b, 3600, n, d], k: [b, 512, n, d]
                         # scores: [b, n, 3600, 512]
-                        scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+                        try:
+                            scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+                            if self.rank == 0:
+                                print(f"🔍 scores形状: {scores.shape}")
+                        except Exception as e:
+                            if self.rank == 0:
+                                print(f"⚠️ 计算scores时出错: {e}")
+                                print(f"⚠️ q.shape: {q.shape}")
+                                print(f"⚠️ k.shape: {k.shape}")
+                                print(f"⚠️ k.transpose(-2, -1).shape: {k.transpose(-2, -1).shape}")
+                            raise e
                         
                         # 处理变长序列：使用context_lens来mask
                         if context_lens is not None:
