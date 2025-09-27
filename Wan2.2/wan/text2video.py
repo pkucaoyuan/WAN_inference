@@ -914,7 +914,20 @@ class WanT2V:
                 if self.rank == 0:
                     print(f"🔍 捕获了 {len(captured_attention)} 个attention权重")
                 
-                # 计算所有层的平均attention权重
+                # 检查是否需要立即生成可视化
+                step_interval = 2
+                should_visualize = (step_idx + 1) % step_interval == 0
+                
+                if should_visualize and self.rank == 0:
+                    # 使用第一个层的权重进行可视化，保持原始数值范围
+                    single_layer_weights = captured_attention[0]  # 使用第一个层，形状[1, 40, 3600, 512]
+                    print(f"🔍 单层权重形状: {single_layer_weights.shape}")
+                    print(f"🔍 单层权重范围: {single_layer_weights.min():.4f} - {single_layer_weights.max():.4f}")
+                    
+                    # 立即生成当前步的可视化
+                    self._visualize_current_step(single_layer_weights, step_idx)
+                
+                # 计算所有层的平均attention权重（用于其他用途）
                 # 使用累积平均的方式，避免一次性堆叠所有张量
                 avg_attention_weights = captured_attention[0].clone()  # 从第一个开始
                 for i in range(1, len(captured_attention)):
@@ -923,15 +936,7 @@ class WanT2V:
                 
                 if self.rank == 0:
                     print(f"🔍 平均后的权重形状: {avg_attention_weights.shape}")
-                    print(f"🔍 权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
-                
-                # 检查是否需要立即生成可视化
-                step_interval = 2
-                should_visualize = (step_idx + 1) % step_interval == 0
-                
-                if should_visualize and self.rank == 0:
-                    # 立即生成当前步的可视化
-                    self._visualize_current_step(avg_attention_weights, step_idx)
+                    print(f"🔍 平均权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
                 
                 # 不保存到历史记录中，直接释放内存
                 if self.rank == 0:

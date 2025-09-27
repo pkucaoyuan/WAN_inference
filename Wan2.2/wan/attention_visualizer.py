@@ -154,13 +154,28 @@ class AttentionVisualizer:
                     fontsize=12, fontweight='bold')
         
         # 设置tick labels
-        if len(tokens) <= 50:  # 避免标签过密
-            ax.set_xticks(range(len(tokens)))
-            ax.set_xticklabels(tokens, rotation=45, ha='right')
+        # 注意：tokens数量可能与attention权重的context维度不匹配
+        context_len = weights.shape[1]  # attention权重的context维度
+        
+        if len(tokens) == context_len:
+            # 如果tokens数量匹配，直接使用
+            if len(tokens) <= 50:
+                ax.set_xticks(range(len(tokens)))
+                ax.set_xticklabels(tokens, rotation=45, ha='right')
+            else:
+                ax.set_xticks(range(0, len(tokens), max(1, len(tokens)//20)))
+                ax.set_xticklabels([tokens[i] for i in range(0, len(tokens), max(1, len(tokens)//20))], 
+                                  rotation=45, ha='right')
         else:
-            ax.set_xticks(range(0, len(tokens), max(1, len(tokens)//20)))
-            ax.set_xticklabels([tokens[i] for i in range(0, len(tokens), max(1, len(tokens)//20))], 
-                              rotation=45, ha='right')
+            # 如果tokens数量不匹配，使用位置索引
+            print(f"⚠️ Tokens数量({len(tokens)})与attention权重context维度({context_len})不匹配，使用位置索引")
+            if context_len <= 50:
+                ax.set_xticks(range(context_len))
+                ax.set_xticklabels([f"T{i}" for i in range(context_len)], rotation=45, ha='right')
+            else:
+                step = max(1, context_len // 20)
+                ax.set_xticks(range(0, context_len, step))
+                ax.set_xticklabels([f"T{i}" for i in range(0, context_len, step)], rotation=45, ha='right')
         
         # 添加颜色条
         cbar = plt.colorbar(im, ax=ax, shrink=0.8)
