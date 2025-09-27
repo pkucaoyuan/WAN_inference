@@ -762,25 +762,23 @@ class WanT2V:
                         # 因为我们需要获取attention权重
                         scale = 1.0 / (d ** 0.5)
                         
+                        # 计算attention scores
+                        # q: [b, 3600, n, d], k: [b, 512, n, d]
+                        # scores: [b, n, 3600, 512]
+                        scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+                        
                         # 处理变长序列：使用context_lens来mask
                         if context_lens is not None:
-                            # 创建mask
-                            max_len = k.size(1)
+                            # 创建mask: [b, 1, 1, 512]
+                            max_len = k.size(1)  # 512
                             mask = torch.arange(max_len, device=k.device).expand(b, max_len) < context_lens.unsqueeze(1)
-                            mask = mask.unsqueeze(1).unsqueeze(1)  # [b, 1, 1, max_len]
+                            mask = mask.unsqueeze(1).unsqueeze(1)  # [b, 1, 1, 512]
                             
-                            # 计算attention scores
-                            scores = torch.matmul(q, k.transpose(-2, -1)) * scale
-                            
-                            # 应用mask
+                            # 应用mask到scores
                             scores = scores.masked_fill(~mask, float('-inf'))
-                            
-                            # 计算attention权重
-                            attention_weights = torch.softmax(scores, dim=-1)
-                        else:
-                            # 如果没有context_lens，直接计算
-                            scores = torch.matmul(q, k.transpose(-2, -1)) * scale
-                            attention_weights = torch.softmax(scores, dim=-1)
+                        
+                        # 计算attention权重
+                        attention_weights = torch.softmax(scores, dim=-1)
                         
                         # 确保attention_weights是张量
                         if isinstance(attention_weights, torch.Tensor):
