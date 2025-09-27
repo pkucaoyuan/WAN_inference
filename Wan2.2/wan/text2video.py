@@ -696,6 +696,14 @@ class WanT2V:
             print(f"✅ 推理完成: {len(self.step_timings)}步")
         # 解码latents为视频
             x0 = latents
+            if self.rank == 0:
+                print(f"🔍 最终latents检查:")
+                print(f"  latents形状: {x0[0].shape}")
+                print(f"  latent帧数: {x0[0].shape[1]}")
+                print(f"  期望输出帧数: {frame_num}")
+                if x0[0].shape[1] != frame_num // self.vae_stride[0]:
+                    print(f"⚠️ 警告: latent帧数({x0[0].shape[1]}) != 期望latent帧数({frame_num // self.vae_stride[0]})")
+                    print(f"  这可能导致最终输出帧数不正确")
             if offload_model:
                 self.low_noise_model.cpu()
                 self.high_noise_model.cpu()
