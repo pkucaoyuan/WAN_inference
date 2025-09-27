@@ -598,11 +598,12 @@ class WanT2V:
                         print(f"🔍 当前帧数: {current_frames}, 目标帧数: {target_frames}")
                     
                     # 创建新的latents tensor: [C, target_frames, H, W]
-                    new_latents = torch.zeros(
+                    # 使用现有帧的平均值初始化，避免零值导致的噪点
+                    mean_frame = latents[0].mean(dim=1, keepdim=True)  # [C, 1, H, W]
+                    new_latents = mean_frame.expand(
                         latents[0].shape[0], target_frames, 
-                        latents[0].shape[2], latents[0].shape[3],
-                        device=latents[0].device, dtype=latents[0].dtype
-                    )
+                        latents[0].shape[2], latents[0].shape[3]
+                    ).clone()
                     
                     # 考虑奇偶性的帧数补全
                     if self.rank == 0:
@@ -631,6 +632,7 @@ class WanT2V:
                     
                     if self.rank == 0:
                         print(f"🔍 帧数补全完成: 每帧都复制一次")
+                        print(f"🔍 使用平均值初始化避免噪点: {mean_frame.mean():.4f}")
                     
                     # 更新latents
                     latents[0] = new_latents
