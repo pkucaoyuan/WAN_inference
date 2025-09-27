@@ -82,6 +82,11 @@ class WanT2V:
         self.attention_visualizer = None
         self.attention_weights_history = []
         self.enable_attention_visualization = False
+        
+        # 误差分析相关
+        self.enable_error_analysis = False
+        self.error_history = []
+        self.error_output_dir = None
 
         self.num_train_timesteps = config.num_train_timesteps
         self.boundary = config.boundary
