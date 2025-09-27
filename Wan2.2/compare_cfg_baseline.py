@@ -209,7 +209,7 @@ def main():
     parser.add_argument('--enable_half_frame_generation', action='store_true', help='启用帧数减半优化')
     parser.add_argument('--enable_improved_frame_completion', action='store_true', help='启用改进的帧数补全（偶数帧复制前一个奇数帧）')
     parser.add_argument('--comparison_mode', type=str, default='cfg_vs_baseline', 
-                       choices=['cfg_vs_baseline', 'half_vs_baseline', 'cfg_vs_half', 'improved_vs_baseline'],
+                       choices=['cfg_vs_baseline', 'half_vs_baseline', 'cfg_vs_half', 'improved_vs_baseline', 'combined_vs_baseline'],
                        help='比较模式')
     
     args = parser.parse_args()
@@ -371,6 +371,42 @@ def main():
             enable_improved_frame_completion=False
         )
         method1_name, method2_name = "改进帧数补全方法", "Baseline方法"
+        
+    elif args.comparison_mode == 'combined_vs_baseline':
+        # 方法1: 组合优化方法（CFG截断 + 改进帧数补全）
+        method1_output_dir = os.path.join(args.output_dir, "combined_optimization")
+        result1 = generate_video(
+            model=model,
+            prompt=args.prompt,
+            size=size,
+            frame_num=args.frame_num,
+            sample_steps=args.sample_steps,
+            cfg_truncate_steps=args.cfg_truncate_steps,
+            cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps,
+            seed=args.seed,
+            output_dir=method1_output_dir,
+            method_name="组合优化方法",
+            enable_half_frame_generation=False,
+            enable_improved_frame_completion=True
+        )
+        
+        # 方法2: Baseline (无截断)
+        method2_output_dir = os.path.join(args.output_dir, "baseline")
+        result2 = generate_video(
+            model=model,
+            prompt=args.prompt,
+            size=size,
+            frame_num=args.frame_num,
+            sample_steps=args.sample_steps,
+            cfg_truncate_steps=0,
+            cfg_truncate_high_noise_steps=0,
+            seed=args.seed,
+            output_dir=method2_output_dir,
+            method_name="Baseline方法",
+            enable_half_frame_generation=False,
+            enable_improved_frame_completion=False
+        )
+        method1_name, method2_name = "组合优化方法", "Baseline方法"
     
     # 计算误差
     print("\n" + "="*80)
