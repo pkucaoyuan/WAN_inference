@@ -674,6 +674,11 @@ class WanT2V:
                     if self.rank == 0:
                         print(f"🔍 使用改进帧数补全后的latents: {latents[0].shape}")
                     # latents已经在改进帧数补全中修改，直接使用
+                elif enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps):
+                    # 原始帧数补全：使用修改后的latents
+                    if self.rank == 0:
+                        print(f"🔍 使用原始帧数补全后的latents: {latents[0].shape}")
+                    # latents已经在原始帧数补全中修改，直接使用
                 else:
                     # 正常情况：使用scheduler的输出
                     latents = [temp_x0.squeeze(0)]
