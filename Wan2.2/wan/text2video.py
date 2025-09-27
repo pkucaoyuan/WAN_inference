@@ -708,27 +708,30 @@ class WanT2V:
     def _visualize_current_step(self, attention_weights, step_idx):
         """立即生成当前步的可视化"""
         try:
-            # 获取实际输入的tokens
+            # 获取实际输入的tokens（使用与模型相同的tokenizer）
             tokens = self._get_tokens_from_prompt(self.prompt)
             
             # 平均当前步的所有批次和注意力头
             # attention_weights形状: [batch, heads, seq_len, context_len]
             avg_attention_weights = attention_weights.mean(dim=(0, 1))  # [seq_len, context_len]
             
-            # 只使用前6个token对应的attention权重
-            if len(tokens) <= 6:
-                # 如果tokens少于等于6个，只取对应的attention权重
-                token_attention_weights = avg_attention_weights[:, :len(tokens)]
+            # 获取实际文本长度（非填充部分）
+            actual_text_len = len(tokens)
+            
+            # 只使用实际文本token对应的attention权重
+            if actual_text_len <= 6:
+                # 如果实际tokens少于等于6个，只取对应的attention权重
+                token_attention_weights = avg_attention_weights[:, :actual_text_len]
                 used_tokens = tokens
             else:
-                # 如果tokens超过6个，只取前6个
+                # 如果实际tokens超过6个，只取前6个
                 token_attention_weights = avg_attention_weights[:, :6]
                 used_tokens = tokens[:6]
             
             # 创建当前step的cross attention map可视化
             step_save_path = os.path.join(self.attention_output_dir, f"step_{step_idx+1:02d}_cross_attention_map.png")
             self.attention_visualizer.visualize_attention_step(
-                token_attention_weights,  # 只使用前6个token的权重
+                token_attention_weights,  # 只使用实际文本token的权重
                 used_tokens, step_idx, step_save_path, title=f"Step {step_idx+1} Cross Attention Map"
             )
             
@@ -769,15 +772,26 @@ class WanT2V:
         return report
 
     def _get_tokens_from_prompt(self, prompt):
-        """从prompt获取tokens"""
+        """从prompt获取tokens，使用与模型相同的tokenizer"""
         try:
-            from transformers import T5Tokenizer
-            tokenizer = T5Tokenizer.from_pretrained("t5-base")
-            tokens = tokenizer.tokenize(prompt)
-            # 只返回前6个token
-            return tokens[:6]
-        except:
-            # 简单的tokenization
+            # 使用与模型相同的T5 tokenizer
+            if hasattr(self, 'text_encoder') and hasattr(self.text_encoder, 'tokenizer'):
+                # 使用模型实际使用的tokenizer
+                tokenizer = self.text_encoder.tokenizer
+                # 获取token IDs
+                token_ids = tokenizer(prompt, add_special_tokens=True, return_tensors="pt").input_ids[0]
+                # 转换为token字符串
+                tokens = tokenizer.convert_ids_to_tokens(token_ids)
+                # 过滤掉特殊token
+                tokens = [token for token in tokens if not token.startswith('<') and not token.startswith('▁')]
+                # 只返回前6个token
+                return tokens[:6]
+            else:
+                # 回退到简单分割
+                tokens = prompt.split()
+                return tokens[:6]
+        except Exception as e:
+            # 最终回退
             tokens = prompt.split()
             return tokens[:6]
     
