@@ -699,16 +699,25 @@ class WanT2V:
                 self._create_attention_visualizations(prompt)
             
             # 创建误差分析
-            if self.enable_error_analysis and self.error_history:
-                self._create_error_visualization()
-                self._create_error_analysis_report()
+            if self.enable_error_analysis:
+                if self.error_history:
+                    if self.rank == 0:
+                        print(f"📊 开始创建误差分析，共{len(self.error_history)}步数据")
+                    self._create_error_visualization()
+                    self._create_error_analysis_report()
+                    if self.rank == 0:
+                        print(f"📊 误差分析完成，结果保存到: {self.error_output_dir}")
+                        # 如果误差分析结果在主输出目录中，显示相对路径
+                        if output_dir and self.error_output_dir.startswith(output_dir):
+                            relative_path = os.path.relpath(self.error_output_dir, output_dir)
+                            print(f"📁 误差分析文件: {relative_path}/error_analysis_plots.png")
+                            print(f"📁 误差分析报告: {relative_path}/error_analysis_report.md")
+                else:
+                    if self.rank == 0:
+                        print("⚠️ 误差分析已启用，但没有收集到误差数据")
+            else:
                 if self.rank == 0:
-                    print(f"📊 误差分析完成，结果保存到: {self.error_output_dir}")
-                    # 如果误差分析结果在主输出目录中，显示相对路径
-                    if output_dir and self.error_output_dir.startswith(output_dir):
-                        relative_path = os.path.relpath(self.error_output_dir, output_dir)
-                        print(f"📁 误差分析文件: {relative_path}/error_analysis_plots.png")
-                        print(f"📁 误差分析报告: {relative_path}/error_analysis_report.md")
+                    print("📝 误差分析未启用")
             
             return video, timing_info
             
@@ -963,7 +972,12 @@ class WanT2V:
     def _create_error_visualization(self):
         """创建误差分析可视化图表"""
         if not self.enable_error_analysis or not self.error_history:
+            if self.rank == 0:
+                print("⚠️ 无法创建误差分析图表：误差分析未启用或无数据")
             return
+        
+        if self.rank == 0:
+            print(f"📊 开始创建误差分析图表，数据点数: {len(self.error_history)}")
         
         import matplotlib.pyplot as plt
         import numpy as np
@@ -1022,11 +1036,17 @@ class WanT2V:
         
         # 保存图表
         error_plot_path = os.path.join(self.error_output_dir, "error_analysis_plots.png")
-        plt.savefig(error_plot_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        if self.rank == 0:
-            print(f"📊 误差分析图表已保存到: {error_plot_path}")
+        try:
+            plt.savefig(error_plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            if self.rank == 0:
+                print(f"📊 误差分析图表已保存到: {error_plot_path}")
+        except Exception as e:
+            if self.rank == 0:
+                print(f"❌ 保存误差分析图表时出错: {e}")
+                import traceback
+                print(f"❌ 详细错误信息: {traceback.format_exc()}")
+            plt.close()
 
     def _create_error_analysis_report(self):
         """创建误差分析报告"""
