@@ -732,8 +732,8 @@ class WanT2V:
         
         def attention_hook(module, input, output):
             """Hook函数：捕获真实的cross attention权重"""
-            # 检查是否是WanAttentionBlock模块
-            if hasattr(module, 'cross_attn') and hasattr(module.cross_attn, 'forward'):
+            # 检查是否是WanCrossAttention模块
+            if hasattr(module, '__class__') and 'WanCrossAttention' in module.__class__.__name__:
                 try:
                     # 调试信息：打印输入参数
                     if self.rank == 0:
@@ -746,20 +746,17 @@ class WanT2V:
                                 print(f"🔍 输入[{i}] 类型: {type(inp)}")
                     
                     # 从input中提取参数
-                    # input[0] = x, input[1] = e, input[2] = seq_lens, input[3] = grid_sizes, 
-                    # input[4] = freqs, input[5] = context, input[6] = context_lens
-                    if len(input) >= 7:
-                        x, e, seq_lens, grid_sizes, freqs, context, context_lens = input[:7]
+                    # WanCrossAttention.forward(x, context, context_lens)
+                    if len(input) >= 3:
+                        x, context, context_lens = input[:3]
                         
-                        # 直接计算attention权重，不依赖模型的return_attention参数
-                        # 使用WanCrossAttention的内部逻辑
-                        cross_attn = module.cross_attn
-                        b, n, d = x.size(0), cross_attn.num_heads, cross_attn.head_dim
+                        # 直接计算attention权重，使用WanCrossAttention的内部逻辑
+                        b, n, d = x.size(0), module.num_heads, module.head_dim
                         
                         # 计算Q, K, V
-                        q = cross_attn.norm_q(cross_attn.q(module.norm3(x))).view(b, -1, n, d)
-                        k = cross_attn.norm_k(cross_attn.k(context)).view(b, -1, n, d)
-                        v = cross_attn.v(context).view(b, -1, n, d)
+                        q = module.norm_q(module.q(x)).view(b, -1, n, d)
+                        k = module.norm_k(module.k(context)).view(b, -1, n, d)
+                        v = module.v(context).view(b, -1, n, d)
                         
                         # 计算attention权重
                         scale = 1.0 / (d ** 0.5)
@@ -776,36 +773,35 @@ class WanT2V:
                     else:
                         if self.rank == 0:
                             print(f"⚠️ 输入参数不足，无法计算cross_attn")
-                            print(f"⚠️ 期望7个参数，实际得到{len(input)}个")
+                            print(f"⚠️ 期望3个参数，实际得到{len(input)}个")
                 except Exception as e:
                     if self.rank == 0:
                         print(f"⚠️ 无法获取真实attention权重: {e}")
                         print(f"⚠️ 模块类型: {type(module)}")
                         print(f"⚠️ 输入参数数量: {len(input) if input else 0}")
         
-        # 注册hook到当前使用的模型的所有attention block
+        # 注册hook到WanCrossAttention模块，而不是WanAttentionBlock
         hooks = []
-        attention_blocks_found = 0
+        cross_attention_found = 0
         
         # 先打印所有模块名称，方便调试
         if self.rank == 0:
             print(f"🔍 模型中的所有模块:")
             for name, module in model.named_modules():
-                if hasattr(module, 'cross_attn'):
-                    print(f"   - {name} ({module.__class__.__name__}) - 有cross_attn")
+                if hasattr(module, '__class__') and 'WanCrossAttention' in module.__class__.__name__:
+                    print(f"   - {name} ({module.__class__.__name__}) - WanCrossAttention")
         
         for name, module in model.named_modules():
-            if hasattr(module, 'cross_attn'): # 简化条件
+            # 直接查找WanCrossAttention模块
+            if hasattr(module, '__class__') and 'WanCrossAttention' in module.__class__.__name__:
                 hook = module.register_forward_hook(attention_hook)
                 hooks.append(hook)
-                attention_blocks_found += 1
+                cross_attention_found += 1
                 if self.rank == 0:
-                    print(f"🔍 注册hook到模块: {name} ({module.__class__.__name__})")
-                    print(f"🔍 模块有cross_attn: {hasattr(module, 'cross_attn')}")
-                    print(f"🔍 cross_attn支持return_attention: {hasattr(module.cross_attn, 'return_attention')}")
+                    print(f"🔍 注册hook到WanCrossAttention模块: {name} ({module.__class__.__name__})")
         
         if self.rank == 0:
-            print(f"🔍 总共找到 {attention_blocks_found} 个attention block")
+            print(f"🔍 总共找到 {cross_attention_found} 个WanCrossAttention模块")
             print(f"🔍 注册了 {len(hooks)} 个hook")
         
         try:
