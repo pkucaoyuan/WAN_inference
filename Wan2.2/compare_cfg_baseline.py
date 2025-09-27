@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from wan.text2video import WanT2V
-from wan.utils import parse_size
+from wan.configs import SIZE_CONFIGS
 
 
 def load_model(ckpt_dir, device):
@@ -173,7 +173,7 @@ def print_error_report(error_stats, method1_name, method2_name):
 def main():
     parser = argparse.ArgumentParser(description='CFG截断方法 vs Baseline 对比')
     parser.add_argument('--task', type=str, default='t2v-A14B', help='任务类型')
-    parser.add_argument('--size', type=str, default='1280*720', help='视频尺寸')
+    parser.add_argument('--size', type=str, default='1280*720', choices=list(SIZE_CONFIGS.keys()), help='视频尺寸')
     parser.add_argument('--ckpt_dir', type=str, required=True, help='模型检查点目录')
     parser.add_argument('--frame_num', type=int, default=1, help='帧数')
     parser.add_argument('--sample_steps', type=int, default=20, help='采样步数')
@@ -187,7 +187,7 @@ def main():
     args = parser.parse_args()
     
     # 解析尺寸
-    size = parse_size(args.size)
+    size = SIZE_CONFIGS[args.size]
     
     # 创建输出目录
     os.makedirs(args.output_dir, exist_ok=True)
