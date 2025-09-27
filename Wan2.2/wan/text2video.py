@@ -693,54 +693,72 @@ class WanT2V:
         print(f"Token数量: {len(tokens)}")
         print(f"Token列表: {tokens}")
         
-        # 计算所有cross attention map的平均值
-        if self.attention_weights_history:
-            # 将所有attention权重堆叠并计算平均
-            all_attention_weights = torch.stack(self.attention_weights_history)  # [steps, batch, heads, seq_len, context_len]
-            
-            # 每两个step生成一张当前步的平均cross attention图
-            step_interval = 2
-            for step_idx in range(0, len(self.attention_weights_history), step_interval):
-                # 获取当前step的attention权重
-                current_attention = self.attention_weights_history[step_idx]
-                
-                # 平均当前step的所有批次和注意力头
-                # current_attention形状: [batch, heads, seq_len, context_len] (已经是所有层的平均)
-                avg_attention_weights = current_attention.mean(dim=(0, 1))  # [seq_len, context_len]
-                
-                # 创建当前step的平均cross attention map的可视化
-                step_save_path = os.path.join(self.attention_output_dir, f"step_{step_idx+1:02d}_cross_attention_map.png")
-                self.attention_visualizer.visualize_attention_step(
-                    avg_attention_weights.unsqueeze(0).unsqueeze(0),  # 添加batch和head维度
-                    tokens, step_idx, step_save_path, title=f"Step {step_idx+1} Cross Attention Map"
-                )
-                
-                print(f"Step {step_idx+1} Cross Attention Map已保存到: {step_save_path}")
-                print(f"权重形状: {avg_attention_weights.shape}")
-                print(f"权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
-            
-            # 同时生成所有步骤的平均cross attention map
-            # all_attention_weights形状: [steps, batch, heads, seq_len, context_len] (每步已经是所有层的平均)
-            avg_attention_weights = all_attention_weights.mean(dim=(0, 1, 2))  # [seq_len, context_len]
-            avg_save_path = os.path.join(self.attention_output_dir, "average_cross_attention_map.png")
-            self.attention_visualizer.visualize_attention_step(
-                avg_attention_weights.unsqueeze(0).unsqueeze(0),  # 添加batch和head维度
-                tokens, 0, avg_save_path, title="Average Cross Attention Map (All Steps)"
-            )
-            
-            print(f"平均Cross Attention Map已保存到: {avg_save_path}")
-            print(f"平均权重形状: {avg_attention_weights.shape}")
-            print(f"权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
+        # 注意力可视化已在每步生成完成，这里只生成分析报告
+        print(f"🎨 注意力可视化已在每步生成完成")
+        print(f"📊 生成分析报告...")
         
-        # 创建分析报告
-        analysis = self.attention_visualizer.analyze_attention_patterns(
-            self.attention_weights_history, tokens
-        )
+        # 创建简化的分析报告
+        analysis = self._create_simple_analysis_report(tokens)
         
         report_path = os.path.join(self.attention_output_dir, "attention_analysis_report.md")
         self.attention_visualizer.save_analysis_report(analysis, report_path)
         
         print(f"注意力可视化已保存到: {self.attention_output_dir}")
+
+    def _visualize_current_step(self, attention_weights, step_idx):
+        """立即生成当前步的可视化"""
+        try:
+            # 获取tokenizer和tokens
+            tokens = self._get_tokens("A beautiful sunset over the ocean")  # 使用默认prompt
+            
+            # 平均当前步的所有批次和注意力头
+            # attention_weights形状: [batch, heads, seq_len, context_len]
+            avg_attention_weights = attention_weights.mean(dim=(0, 1))  # [seq_len, context_len]
+            
+            # 创建当前step的平均cross attention map的可视化
+            step_save_path = os.path.join(self.attention_output_dir, f"step_{step_idx+1:02d}_cross_attention_map.png")
+            self.attention_visualizer.visualize_attention_step(
+                avg_attention_weights.unsqueeze(0).unsqueeze(0),  # 添加batch和head维度
+                tokens, step_idx, step_save_path, title=f"Step {step_idx+1} Cross Attention Map"
+            )
+            
+            print(f"Step {step_idx+1} Cross Attention Map已保存到: {step_save_path}")
+            print(f"权重形状: {avg_attention_weights.shape}")
+            print(f"权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
+            
+        except Exception as e:
+            print(f"⚠️ 生成Step {step_idx+1}可视化时出错: {e}")
+
+    def _create_simple_analysis_report(self, tokens):
+        """创建简化的分析报告"""
+        report = f"""# 注意力可视化分析报告
+
+## 基本信息
+- **Token数量**: {len(tokens)}
+- **Token列表**: {tokens}
+- **可视化方式**: 每两步生成一张图，立即释放内存
+- **输出目录**: {self.attention_output_dir}
+
+## 生成的文件
+- `step_02_cross_attention_map.png` - Step 2的注意力图
+- `step_04_cross_attention_map.png` - Step 4的注意力图
+- `step_06_cross_attention_map.png` - Step 6的注意力图
+- ... (每两步一张图)
+- `step_20_cross_attention_map.png` - Step 20的注意力图
+
+## 技术说明
+- 每步捕获40个WanCrossAttention层的权重
+- 对40个层和40个注意力头求平均
+- 立即生成可视化图并释放内存
+- 避免内存累积问题
+
+## 注意力模式分析
+每张图显示图像token（3600个）对文本token（512个）的注意力权重分布。
+- 横轴：文本token位置
+- 纵轴：图像token位置
+- 颜色：注意力权重强度（白色=高权重，黑色=低权重）
+"""
+        return report
     
     def _call_model_with_attention_capture(self, model, latent_model_input, timestep, model_kwargs, step_idx):
         """调用模型并捕获真实的注意力权重"""
@@ -894,13 +912,22 @@ class WanT2V:
                     print(f"🔍 平均后的权重形状: {avg_attention_weights.shape}")
                     print(f"🔍 权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
                 
-                # 将平均后的权重添加到历史记录中
-                self.attention_weights_history.append(avg_attention_weights)
+                # 检查是否需要立即生成可视化
+                step_interval = 2
+                should_visualize = (step_idx + 1) % step_interval == 0
                 
+                if should_visualize and self.rank == 0:
+                    # 立即生成当前步的可视化
+                    self._visualize_current_step(avg_attention_weights, step_idx)
+                
+                # 不保存到历史记录中，直接释放内存
                 if self.rank == 0:
                     model_type = "高噪声专家" if timestep.item() >= self.boundary * self.num_train_timesteps else "低噪声专家"
                     print(f"🔍 捕获{model_type}真实注意力权重 - Step {step_idx+1}")
                     print(f"🔍 已平均 {len(captured_attention)} 个attention层的权重")
+                    if should_visualize:
+                        print(f"🔍 已生成Step {step_idx+1}的可视化图")
+                    print(f"🔍 已释放Step {step_idx+1}的attention权重内存")
             else:
                 if self.rank == 0:
                     print(f"⚠️ 未捕获到真实attention权重，跳过Step {step_idx+1}")
