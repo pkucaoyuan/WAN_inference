@@ -585,10 +585,17 @@ class WanT2V:
                 elif enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps):
                     if self.rank == 0:
                         print(f"🔄 高噪声专家结束，开始帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
+                        print(f"🔍 调试信息: frame_num={frame_num}, F={F}")
+                        print(f"🔍 调试信息: half_target_shape={half_target_shape}")
+                        print(f"🔍 调试信息: full_target_shape={full_target_shape}")
+                        print(f"🔍 调试信息: vae_stride={self.vae_stride}")
                     
                     # 计算当前帧数和目标帧数
                     current_frames = latents[0].shape[1]  # 当前帧数（减半后经过VAE）
                     target_frames = full_target_shape[1]  # 目标帧数（完整帧数经过VAE）
+                    
+                    if self.rank == 0:
+                        print(f"🔍 当前帧数: {current_frames}, 目标帧数: {target_frames}")
                     
                     # 创建新的latents tensor: [C, target_frames, H, W]
                     new_latents = torch.zeros(
@@ -669,7 +676,7 @@ class WanT2V:
                     # latents已经在改进帧数补全中修改，直接使用
                 else:
                     # 正常情况：使用scheduler的输出
-                    latents = [temp_x0.squeeze(0)]
+                latents = [temp_x0.squeeze(0)]
 
                 # 记录每步推理时间
                 step_end_time = time.time()
