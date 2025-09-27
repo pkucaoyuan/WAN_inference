@@ -135,16 +135,23 @@ class AttentionVisualizer:
         # 创建图像
         fig, ax = plt.subplots(figsize=(12, 8))
         
-        # 绘制热力图
-        im = ax.imshow(weights, cmap='Blues', aspect='auto')
+        # 优化可视化效果
+        # 使用更好的颜色映射和对比度
+        im = ax.imshow(weights, cmap='viridis', aspect='auto', interpolation='nearest')
         
         # 设置坐标轴
         ax.set_xlabel('Key Tokens (Context)', fontsize=12)
         ax.set_ylabel('Query Tokens (Image)', fontsize=12)
         if title:
-            ax.set_title(title, fontsize=14)
+            ax.set_title(title, fontsize=14, fontweight='bold')
         else:
-            ax.set_title(f'Cross Attention Weights - Step {step}', fontsize=14)
+            ax.set_title(f'Cross Attention Weights - Step {step}', fontsize=14, fontweight='bold')
+        
+        # 添加统计信息到标题
+        min_val, max_val = weights.min(), weights.max()
+        mean_val = weights.mean()
+        ax.set_title(f'{title}\nRange: {min_val:.4f} - {max_val:.4f}, Mean: {mean_val:.4f}', 
+                    fontsize=12, fontweight='bold')
         
         # 设置tick labels
         if len(tokens) <= 50:  # 避免标签过密
@@ -156,8 +163,11 @@ class AttentionVisualizer:
                               rotation=45, ha='right')
         
         # 添加颜色条
-        cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label('Attention Weight', fontsize=12)
+        cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+        cbar.set_label('Attention Weight', fontsize=12, fontweight='bold')
+        
+        # 设置颜色条刻度
+        cbar.ax.tick_params(labelsize=10)
         
         # 调整布局
         plt.tight_layout()

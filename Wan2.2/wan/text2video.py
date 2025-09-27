@@ -718,7 +718,7 @@ class WanT2V:
             # 创建当前step的平均cross attention map的可视化
             step_save_path = os.path.join(self.attention_output_dir, f"step_{step_idx+1:02d}_cross_attention_map.png")
             self.attention_visualizer.visualize_attention_step(
-                avg_attention_weights.unsqueeze(0).unsqueeze(0),  # 添加batch和head维度
+                avg_attention_weights,  # 直接传递已平均的权重，形状[seq_len, context_len]
                 tokens, step_idx, step_save_path, title=f"Step {step_idx+1} Cross Attention Map"
             )
             
