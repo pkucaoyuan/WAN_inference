@@ -709,7 +709,7 @@ class WanT2V:
         """立即生成当前步的可视化"""
         try:
             # 获取tokenizer和tokens
-            tokens = self._get_tokens("A beautiful sunset over the ocean")  # 使用默认prompt
+            tokens = self._get_tokens_from_prompt("A beautiful sunset over the ocean")  # 使用默认prompt
             
             # 平均当前步的所有批次和注意力头
             # attention_weights形状: [batch, heads, seq_len, context_len]
@@ -722,12 +722,14 @@ class WanT2V:
                 tokens, step_idx, step_save_path, title=f"Step {step_idx+1} Cross Attention Map"
             )
             
-            print(f"Step {step_idx+1} Cross Attention Map已保存到: {step_save_path}")
-            print(f"权重形状: {avg_attention_weights.shape}")
-            print(f"权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
+            print(f"✅ Step {step_idx+1} Cross Attention Map已保存到: {step_save_path}")
+            print(f"📊 权重形状: {avg_attention_weights.shape}")
+            print(f"📊 权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
             
         except Exception as e:
-            print(f"⚠️ 生成Step {step_idx+1}可视化时出错: {e}")
+            print(f"❌ 生成Step {step_idx+1}可视化时出错: {e}")
+            import traceback
+            print(f"❌ 详细错误信息: {traceback.format_exc()}")
 
     def _create_simple_analysis_report(self, tokens):
         """创建简化的分析报告"""
@@ -759,6 +761,17 @@ class WanT2V:
 - 颜色：注意力权重强度（白色=高权重，黑色=低权重）
 """
         return report
+
+    def _get_tokens_from_prompt(self, prompt):
+        """从prompt获取tokens"""
+        try:
+            from transformers import T5Tokenizer
+            tokenizer = T5Tokenizer.from_pretrained("t5-base")
+            tokens = tokenizer.tokenize(prompt)
+        except:
+            # 简单的tokenization
+            tokens = prompt.split()
+        return tokens
     
     def _call_model_with_attention_capture(self, model, latent_model_input, timestep, model_kwargs, step_idx):
         """调用模型并捕获真实的注意力权重"""
