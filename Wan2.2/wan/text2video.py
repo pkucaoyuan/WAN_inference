@@ -30,6 +30,20 @@ from .utils.fm_solvers import (
 from .utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
 from .attention_visualizer import AttentionVisualizer, create_attention_visualization_dir
 
+# 调试工具导入
+try:
+    from debug_quality_issue import (
+        debug_latents_quality, 
+        debug_timesteps_sequence, 
+        debug_scheduler_state,
+        compare_latents_before_after,
+        debug_frame_completion_process
+    )
+    DEBUG_AVAILABLE = True
+except ImportError:
+    DEBUG_AVAILABLE = False
+    print("⚠️ 调试工具未找到，跳过调试功能")
+
 
 class WanT2V:
 
@@ -272,6 +286,8 @@ class WanT2V:
                  enable_error_analysis=False,
                  error_output_dir="error_analysis_outputs",
                  enable_improved_frame_completion=False,
+                 enable_debug=False,
+                 debug_output_dir="debug_outputs",
 ):
         r"""
         Generates video frames from text prompt using diffusion process.
@@ -308,6 +324,10 @@ class WanT2V:
             enable_improved_frame_completion (`bool`, *optional*, defaults to False):
                 Enable improved frame completion method. When switching from high-noise to low-noise expert,
                 duplicate odd frames to even positions to maintain seed consistency without restarting scheduler.
+            enable_debug (`bool`, *optional*, defaults to False):
+                Enable debug mode to analyze video quality issues during generation.
+            debug_output_dir (`str`, *optional*, defaults to "debug_outputs"):
+                Directory to save debug analysis results and visualizations.
 
         Returns:
             torch.Tensor:
@@ -332,6 +352,20 @@ class WanT2V:
         else:
             if self.rank == 0:
                 print("📝 注意力可视化已禁用")
+        
+        # 初始化调试模式
+        if enable_debug and DEBUG_AVAILABLE:
+            if self.rank == 0:
+                print("🔍 调试模式已启用")
+                print(f"   调试输出目录: {debug_output_dir}")
+                print("   将分析latents质量、时间步序列和scheduler状态")
+            self.enable_debug = True
+            self.debug_output_dir = debug_output_dir
+        else:
+            if self.rank == 0:
+                print("📝 调试模式已禁用")
+            self.enable_debug = False
+            self.debug_output_dir = None
         
         # 初始化误差分析
         if enable_error_analysis:
@@ -441,6 +475,11 @@ class WanT2V:
                 sample_scheduler.set_timesteps(
                     sampling_steps, device=self.device, shift=shift)
                 timesteps = sample_scheduler.timesteps
+                
+                # 调试：分析初始时间步序列
+                if self.enable_debug and self.rank == 0:
+                    debug_timesteps_sequence(timesteps, boundary, "initial_timesteps", self.debug_output_dir)
+                    debug_scheduler_state(sample_scheduler, "initial_scheduler", self.debug_output_dir)
             elif sample_solver == 'dpm++':
                 sample_scheduler = FlowDPMSolverMultistepScheduler(
                     num_train_timesteps=self.num_train_timesteps,
@@ -534,6 +573,10 @@ class WanT2V:
                     return_dict=False,
                     generator=seed_g)[0]
                 
+                # 调试：分析帧数补全前的latents
+                if self.enable_debug and self.rank == 0 and (enable_improved_frame_completion or enable_half_frame_generation) and is_high_noise_phase and step_idx == max(high_noise_steps):
+                    debug_latents_quality(latents, f"before_frame_completion_step_{step_idx}", self.debug_output_dir)
+                
                 # 改进的帧数补全：在专家切换时模拟半帧生成并替换偶数帧
                 if enable_improved_frame_completion and is_high_noise_phase and step_idx == max(high_noise_steps):
                     if self.rank == 0:
@@ -571,6 +614,10 @@ class WanT2V:
                         print(f"🔍 最终latents形状: {latents[0].shape}")
                         print(f"🔍 最终latents值范围: [{latents[0].min():.4f}, {latents[0].max():.4f}]")
                         print(f"🔍 替换后的latents将传入低噪声专家继续处理")
+                    
+                    # 调试：分析帧数补全后的latents
+                    if self.enable_debug and self.rank == 0:
+                        debug_latents_quality(latents, f"after_improved_frame_completion_step_{step_idx}", self.debug_output_dir)
                     
                     # 更新seq_len为完整帧数的seq_len（低噪声专家使用）
                     current_seq_len = full_seq_len
@@ -683,6 +730,12 @@ class WanT2V:
                     if self.rank == 0:
                         print(f"✅ 帧数补全完成: {latents[0].shape[1]}帧 (考虑奇偶性)")
                         print(f"🔄 Scheduler状态已重新初始化，避免维度不匹配")
+                    
+                    # 调试：分析重新初始化后的scheduler状态
+                    if self.enable_debug and self.rank == 0:
+                        debug_latents_quality(latents, f"after_original_frame_completion_step_{step_idx}", self.debug_output_dir)
+                        debug_timesteps_sequence(timesteps, boundary, f"after_scheduler_reset_step_{step_idx}", self.debug_output_dir)
+                        debug_scheduler_state(sample_scheduler, f"after_scheduler_reset_step_{step_idx}", self.debug_output_dir)
                 
                 # 更新latents（在帧数补全之后）
                 if enable_improved_frame_completion and is_high_noise_phase and step_idx == max(high_noise_steps):
@@ -750,10 +803,16 @@ class WanT2V:
                         actual_frames = videos[0].shape[1]
                     else:
                         print(f"  ⚠️ 警告: videos列表为空")
-                        actual_frames = 0
+                
+                # 调试：分析最终视频质量
+                if self.enable_debug and self.rank == 0:
+                    debug_latents_quality(x0, "final_latents_before_vae", self.debug_output_dir)
+                    if isinstance(videos, list) and len(videos) > 0:
+                        debug_latents_quality([videos[0]], "final_video_after_vae", self.debug_output_dir)
                 else:
-                    print(f"  视频形状: {videos.shape}")
-                    actual_frames = videos.shape[1]
+                    if not isinstance(videos, list):
+                        print(f"  视频形状: {videos.shape}")
+                        actual_frames = videos.shape[1]
                 
                 print(f"  实际输出帧数: {actual_frames}")
                 print(f"  期望输出帧数: {frame_num}")

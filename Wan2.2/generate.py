@@ -239,6 +239,23 @@ def _parse_args():
         action="store_true",
         default=False,
         help="Enable half-frame generation: first expert generates half frames, then duplicate to full frames.")
+    parser.add_argument(
+        "--enable_improved_frame_completion",
+        action="store_true",
+        default=False,
+        help="Enable improved frame completion method.")
+    
+    # Debug parameters
+    parser.add_argument(
+        "--enable_debug",
+        action="store_true",
+        default=False,
+        help="Enable debug mode to analyze video quality issues.")
+    parser.add_argument(
+        "--debug_output_dir",
+        type=str,
+        default="debug_outputs",
+        help="Directory to save debug analysis results.")
     
     # Attention visualization parameters
     parser.add_argument(
@@ -497,8 +514,11 @@ def generate(args):
             cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps,
             output_dir=str(run_folder),
             enable_half_frame_generation=args.enable_half_frame_generation,
+            enable_improved_frame_completion=args.enable_improved_frame_completion,
             enable_attention_visualization=args.enable_attention_visualization,
             attention_output_dir=args.attention_output_dir,
+            enable_debug=args.enable_debug,
+            debug_output_dir=args.debug_output_dir,
             enable_error_analysis=args.enable_error_analysis,
             error_output_dir=args.error_output_dir,
 )
