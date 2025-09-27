@@ -328,9 +328,15 @@ class WanT2V:
         if enable_error_analysis:
             if self.rank == 0:
                 print("📊 误差分析已启用")
-                print(f"   输出目录: {error_output_dir}")
+                # 如果指定了主输出目录，将误差分析结果保存到主目录
+                if output_dir:
+                    error_output_path = os.path.join(output_dir, "error_analysis")
+                    print(f"   输出目录: {error_output_path}")
+                else:
+                    error_output_path = error_output_dir
+                    print(f"   输出目录: {error_output_path}")
                 print("   将记录条件输出和无条件输出的误差")
-            self._enable_error_analysis(error_output_dir)
+            self._enable_error_analysis(error_output_path if output_dir else error_output_dir)
             self.error_history = []  # 存储每步的误差数据
         else:
             if self.rank == 0:
@@ -698,6 +704,11 @@ class WanT2V:
                 self._create_error_analysis_report()
                 if self.rank == 0:
                     print(f"📊 误差分析完成，结果保存到: {self.error_output_dir}")
+                    # 如果误差分析结果在主输出目录中，显示相对路径
+                    if output_dir and self.error_output_dir.startswith(output_dir):
+                        relative_path = os.path.relpath(self.error_output_dir, output_dir)
+                        print(f"📁 误差分析文件: {relative_path}/error_analysis_plots.png")
+                        print(f"📁 误差分析报告: {relative_path}/error_analysis_report.md")
             
             return video, timing_info
             
