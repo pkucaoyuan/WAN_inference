@@ -358,7 +358,7 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
-            F = frame_num
+        F = frame_num
             
         # 计算减半后的target_shape和seq_len（用于高噪声专家）
         half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
@@ -397,13 +397,13 @@ class WanT2V:
             context_null = [t.to(self.device) for t in context_null]
 
         # 根据优化方法选择初始噪声形状
-        if enable_half_frame_generation or enable_improved_frame_completion:
+        if enable_half_frame_generation:
             # 使用减半后的target_shape生成noise（高噪声专家）
             initial_target_shape = half_target_shape
         else:
             # 使用完整帧数的target_shape生成noise
             initial_target_shape = full_target_shape
-            
+
         noise = [
             torch.randn(
                 initial_target_shape[0],
@@ -458,7 +458,7 @@ class WanT2V:
             latents = noise
 
             # 根据当前阶段使用不同的seq_len
-            if enable_half_frame_generation or enable_improved_frame_completion:
+            if enable_half_frame_generation:
                 current_seq_len = half_seq_len  # 高噪声专家使用减半的seq_len
             else:
                 current_seq_len = full_seq_len
@@ -534,7 +534,7 @@ class WanT2V:
                     return_dict=False,
                     generator=seed_g)[0]
                 
-                # 改进的帧数补全：在高噪声专家结束时进行帧数补全（在scheduler.step之后）
+                # 改进的帧数补全：在专家切换时进行帧数补全（在scheduler.step之后）
                 if enable_improved_frame_completion and is_high_noise_phase and step_idx == max(high_noise_steps):
                     if self.rank == 0:
                         print(f"🔄 高噪声专家结束，开始改进帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
