@@ -541,6 +541,9 @@ class WanT2V:
                         print(f"🔍 调试信息: enable_improved_frame_completion={enable_improved_frame_completion}")
                         print(f"🔍 调试信息: is_high_noise_phase={is_high_noise_phase}")
                         print(f"🔍 调试信息: step_idx={step_idx}, max(high_noise_steps)={max(high_noise_steps)}")
+                        print(f"🔍 调试信息: t.item()={t.item()}, boundary={boundary}")
+                        print(f"🔍 调试信息: high_noise_steps={high_noise_steps}")
+                        print(f"🔍 调试信息: timesteps={[ts.item() for ts in timesteps]}")
                     
                     # 当前是完整帧数，模拟半帧生成的效果
                     current_frames = latents[0].shape[1]  # 当前完整帧数
