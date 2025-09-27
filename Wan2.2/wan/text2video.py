@@ -710,17 +710,29 @@ class WanT2V:
                 videos = self.vae.decode(x0)
                 
                 print(f"🔍 VAE解码后视频信息:")
-                print(f"  视频形状: {videos.shape}")
-                print(f"  实际输出帧数: {videos.shape[1]}")
+                print(f"  videos类型: {type(videos)}")
+                if isinstance(videos, list):
+                    print(f"  videos列表长度: {len(videos)}")
+                    if len(videos) > 0:
+                        print(f"  第一个视频形状: {videos[0].shape}")
+                        actual_frames = videos[0].shape[1]
+                    else:
+                        print(f"  ⚠️ 警告: videos列表为空")
+                        actual_frames = 0
+                else:
+                    print(f"  视频形状: {videos.shape}")
+                    actual_frames = videos.shape[1]
+                
+                print(f"  实际输出帧数: {actual_frames}")
                 print(f"  期望输出帧数: {frame_num}")
-                if videos.shape[1] != frame_num:
-                    print(f"⚠️ 警告: 实际帧数({videos.shape[1]}) != 期望帧数({frame_num})")
+                if actual_frames != frame_num:
+                    print(f"⚠️ 警告: 实际帧数({actual_frames}) != 期望帧数({frame_num})")
                 else:
                     print(f"✅ 帧数匹配正确")
                 
                 # 计算预期时长
                 expected_duration = frame_num / 16.0  # 假设FPS=16
-                actual_duration = videos.shape[1] / 16.0
+                actual_duration = actual_frames / 16.0
                 print(f"  期望时长: {expected_duration:.2f}秒 (FPS=16)")
                 print(f"  实际时长: {actual_duration:.2f}秒 (FPS=16)")
 
