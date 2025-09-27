@@ -251,6 +251,18 @@ def _parse_args():
         type=str,
         default="attention_outputs",
         help="Directory to save attention visualization outputs.")
+    
+    # Error analysis parameters
+    parser.add_argument(
+        "--enable_error_analysis",
+        action="store_true",
+        default=False,
+        help="Enable error analysis: record conditional and unconditional output errors.")
+    parser.add_argument(
+        "--error_output_dir",
+        type=str,
+        default="error_analysis_outputs",
+        help="Directory to save error analysis outputs.")
 
     # following args only works for s2v
     parser.add_argument(
@@ -487,6 +499,8 @@ def generate(args):
             enable_half_frame_generation=args.enable_half_frame_generation,
             enable_attention_visualization=args.enable_attention_visualization,
             attention_output_dir=args.attention_output_dir,
+            enable_error_analysis=args.enable_error_analysis,
+            error_output_dir=args.error_output_dir,
 )
         total_inference_time = time.time() - inference_start
         

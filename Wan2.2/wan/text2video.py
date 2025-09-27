@@ -264,6 +264,8 @@ class WanT2V:
                  enable_half_frame_generation=False,
                  enable_attention_visualization=False,
                  attention_output_dir="attention_outputs",
+                 enable_error_analysis=False,
+                 error_output_dir="error_analysis_outputs",
 ):
         r"""
         Generates video frames from text prompt using diffusion process.
@@ -321,6 +323,18 @@ class WanT2V:
         else:
             if self.rank == 0:
                 print("📝 注意力可视化已禁用")
+        
+        # 初始化误差分析
+        if enable_error_analysis:
+            if self.rank == 0:
+                print("📊 误差分析已启用")
+                print(f"   输出目录: {error_output_dir}")
+                print("   将记录条件输出和无条件输出的误差")
+            self._enable_error_analysis(error_output_dir)
+            self.error_history = []  # 存储每步的误差数据
+        else:
+            if self.rank == 0:
+                print("📝 误差分析已禁用")
         
         # 帧数减半优化：第一个专家只生成一半帧数
         original_frame_num = frame_num
@@ -466,15 +480,25 @@ class WanT2V:
                             print(f"高噪声专家CFG截断: Step {step_idx+1}/{len(timesteps)}, t={t.item()}")
                     
                     # 只计算无条件预测
-                    noise_pred_uncond = self._call_model_with_attention_capture(
-                        model, latent_model_input, timestep, model_kwargs_null, step_idx)
+                    if self.enable_error_analysis:
+                        noise_pred_uncond = self._call_model_with_error_analysis(
+                            model, latent_model_input, timestep, model_kwargs_null, step_idx)
+                    else:
+                        noise_pred_uncond = self._call_model_with_attention_capture(
+                            model, latent_model_input, timestep, model_kwargs_null, step_idx)
                     noise_pred = noise_pred_uncond
                 else:
                     # 正常CFG计算
-                    noise_pred_cond = self._call_model_with_attention_capture(
-                        model, latent_model_input, timestep, model_kwargs_c, step_idx)
-                    noise_pred_uncond = self._call_model_with_attention_capture(
-                        model, latent_model_input, timestep, model_kwargs_null, step_idx)
+                    if self.enable_error_analysis:
+                        noise_pred_cond = self._call_model_with_error_analysis(
+                            model, latent_model_input, timestep, model_kwargs_c, step_idx)
+                        noise_pred_uncond = self._call_model_with_error_analysis(
+                            model, latent_model_input, timestep, model_kwargs_null, step_idx)
+                    else:
+                        noise_pred_cond = self._call_model_with_attention_capture(
+                            model, latent_model_input, timestep, model_kwargs_c, step_idx)
+                        noise_pred_uncond = self._call_model_with_attention_capture(
+                            model, latent_model_input, timestep, model_kwargs_null, step_idx)
                     
                     # CFG引导
                 noise_pred = noise_pred_uncond + sample_guide_scale * (
@@ -666,6 +690,13 @@ class WanT2V:
             # 创建注意力可视化
             if self.attention_weights_history:
                 self._create_attention_visualizations(prompt)
+            
+            # 创建误差分析
+            if self.enable_error_analysis and self.error_history:
+                self._create_error_visualization()
+                self._create_error_analysis_report()
+                if self.rank == 0:
+                    print(f"📊 误差分析完成，结果保存到: {self.error_output_dir}")
             
             return video, timing_info
             
@@ -866,3 +897,178 @@ class WanT2V:
         finally:
             for hook in hooks:
                 hook.remove()
+
+    def _enable_error_analysis(self, error_output_dir):
+        """启用误差分析功能"""
+        import os
+        os.makedirs(error_output_dir, exist_ok=True)
+        self.error_output_dir = error_output_dir
+        self.enable_error_analysis = True
+
+    def _call_model_with_error_analysis(self, model, latent_model_input, timestep, model_kwargs, step_idx):
+        """调用模型并记录误差分析"""
+        if not self.enable_error_analysis:
+            return model(latent_model_input, timestep, **model_kwargs)[0]
+        
+        # 获取条件输出
+        noise_pred_cond = model(latent_model_input, timestep, **model_kwargs)[0]
+        
+        # 获取无条件输出（使用空文本）
+        model_kwargs_uncond = model_kwargs.copy()
+        if 'context' in model_kwargs_uncond:
+            # 使用空文本作为无条件输入
+            model_kwargs_uncond['context'] = [torch.zeros_like(ctx) for ctx in model_kwargs['context']]
+        
+        noise_pred_uncond = model(latent_model_input, timestep, **model_kwargs_uncond)[0]
+        
+        # 计算误差
+        absolute_error = torch.abs(noise_pred_cond - noise_pred_uncond)
+        relative_error = absolute_error / (torch.abs(noise_pred_cond) + 1e-8)
+        
+        # 记录误差数据
+        error_data = {
+            'step': step_idx + 1,
+            'timestep': timestep.item(),
+            'absolute_error_mean': absolute_error.mean().item(),
+            'absolute_error_std': absolute_error.std().item(),
+            'relative_error_mean': relative_error.mean().item(),
+            'relative_error_std': relative_error.std().item(),
+            'conditional_output_mean': noise_pred_cond.mean().item(),
+            'conditional_output_std': noise_pred_cond.std().item(),
+            'unconditional_output_mean': noise_pred_uncond.mean().item(),
+            'unconditional_output_std': noise_pred_uncond.std().item(),
+        }
+        
+        self.error_history.append(error_data)
+        
+        if self.rank == 0:
+            print(f"📊 Step {step_idx+1}: 绝对误差={error_data['absolute_error_mean']:.4f}, 相对误差={error_data['relative_error_mean']:.4f}")
+        
+        return noise_pred_cond
+
+    def _create_error_visualization(self):
+        """创建误差分析可视化图表"""
+        if not self.enable_error_analysis or not self.error_history:
+            return
+        
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from datetime import datetime
+        
+        # 提取数据
+        steps = [data['step'] for data in self.error_history]
+        timesteps = [data['timestep'] for data in self.error_history]
+        abs_errors = [data['absolute_error_mean'] for data in self.error_history]
+        rel_errors = [data['relative_error_mean'] for data in self.error_history]
+        cond_means = [data['conditional_output_mean'] for data in self.error_history]
+        uncond_means = [data['unconditional_output_mean'] for data in self.error_history]
+        
+        # 创建图表
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+        
+        # 图1: 绝对误差和相对误差
+        ax1.plot(steps, abs_errors, 'b-', label='绝对误差', linewidth=2)
+        ax1.set_xlabel('步数')
+        ax1.set_ylabel('绝对误差')
+        ax1.set_title('绝对误差随步数变化')
+        ax1.grid(True, alpha=0.3)
+        ax1.legend()
+        
+        ax1_twin = ax1.twinx()
+        ax1_twin.plot(steps, rel_errors, 'r-', label='相对误差', linewidth=2)
+        ax1_twin.set_ylabel('相对误差')
+        ax1_twin.legend(loc='upper right')
+        
+        # 图2: 条件输出 vs 无条件输出
+        ax2.plot(steps, cond_means, 'g-', label='条件输出', linewidth=2)
+        ax2.plot(steps, uncond_means, 'orange', label='无条件输出', linewidth=2)
+        ax2.set_xlabel('步数')
+        ax2.set_ylabel('输出均值')
+        ax2.set_title('条件输出 vs 无条件输出')
+        ax2.grid(True, alpha=0.3)
+        ax2.legend()
+        
+        # 图3: 误差随timestep变化
+        ax3.plot(timesteps, abs_errors, 'b-', label='绝对误差', linewidth=2)
+        ax3.set_xlabel('Timestep')
+        ax3.set_ylabel('绝对误差')
+        ax3.set_title('绝对误差随Timestep变化')
+        ax3.grid(True, alpha=0.3)
+        ax3.legend()
+        
+        # 图4: 相对误差随timestep变化
+        ax4.plot(timesteps, rel_errors, 'r-', label='相对误差', linewidth=2)
+        ax4.set_xlabel('Timestep')
+        ax4.set_ylabel('相对误差')
+        ax4.set_title('相对误差随Timestep变化')
+        ax4.grid(True, alpha=0.3)
+        ax4.legend()
+        
+        plt.tight_layout()
+        
+        # 保存图表
+        error_plot_path = os.path.join(self.error_output_dir, "error_analysis_plots.png")
+        plt.savefig(error_plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        if self.rank == 0:
+            print(f"📊 误差分析图表已保存到: {error_plot_path}")
+
+    def _create_error_analysis_report(self):
+        """创建误差分析报告"""
+        if not self.enable_error_analysis or not self.error_history:
+            return
+        
+        import numpy as np
+        from datetime import datetime
+        
+        # 计算统计信息
+        abs_errors = [data['absolute_error_mean'] for data in self.error_history]
+        rel_errors = [data['relative_error_mean'] for data in self.error_history]
+        
+        report = f"""# 误差分析报告
+
+## 基本信息
+- **总步数**: {len(self.error_history)}
+- **输出目录**: {self.error_output_dir}
+- **分析时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+## 统计摘要
+### 绝对误差
+- **平均值**: {np.mean(abs_errors):.6f}
+- **标准差**: {np.std(abs_errors):.6f}
+- **最大值**: {np.max(abs_errors):.6f}
+- **最小值**: {np.min(abs_errors):.6f}
+
+### 相对误差
+- **平均值**: {np.mean(rel_errors):.6f}
+- **标准差**: {np.std(rel_errors):.6f}
+- **最大值**: {np.max(rel_errors):.6f}
+- **最小值**: {np.min(rel_errors):.6f}
+
+## 详细数据
+| 步数 | Timestep | 绝对误差 | 相对误差 | 条件输出均值 | 无条件输出均值 |
+|------|----------|----------|----------|--------------|----------------|
+"""
+        
+        for data in self.error_history:
+            report += f"| {data['step']} | {data['timestep']:.1f} | {data['absolute_error_mean']:.6f} | {data['relative_error_mean']:.6f} | {data['conditional_output_mean']:.6f} | {data['unconditional_output_mean']:.6f} |\n"
+        
+        report += f"""
+## 分析结论
+1. **误差趋势**: 绝对误差和相对误差在去噪过程中的变化模式
+2. **条件影响**: 条件输出与无条件输出的差异程度
+3. **收敛性**: 误差是否随着去噪步骤的进行而收敛
+
+## 生成的文件
+- `error_analysis_plots.png` - 误差分析可视化图表
+- `error_analysis_report.md` - 详细分析报告
+"""
+        
+        # 保存报告
+        report_path = os.path.join(self.error_output_dir, "error_analysis_report.md")
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(report)
+        
+        if self.rank == 0:
+            print(f"📊 误差分析报告已保存到: {report_path}")
