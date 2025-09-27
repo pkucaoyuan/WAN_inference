@@ -704,9 +704,9 @@ class WanT2V:
                 # 获取当前step的attention权重
                 current_attention = self.attention_weights_history[step_idx]
                 
-                # 平均当前step的所有层、批次和注意力头
-                # current_attention形状: [num_layers, batch, heads, seq_len, context_len]
-                avg_attention_weights = current_attention.mean(dim=(0, 1, 2))  # [seq_len, context_len]
+                # 平均当前step的所有批次和注意力头
+                # current_attention形状: [batch, heads, seq_len, context_len] (已经是所有层的平均)
+                avg_attention_weights = current_attention.mean(dim=(0, 1))  # [seq_len, context_len]
                 
                 # 创建当前step的平均cross attention map的可视化
                 step_save_path = os.path.join(self.attention_output_dir, f"step_{step_idx+1:02d}_cross_attention_map.png")
@@ -720,8 +720,8 @@ class WanT2V:
                 print(f"权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
             
             # 同时生成所有步骤的平均cross attention map
-            # all_attention_weights形状: [steps, num_layers, batch, heads, seq_len, context_len]
-            avg_attention_weights = all_attention_weights.mean(dim=(0, 1, 2, 3))  # [seq_len, context_len]
+            # all_attention_weights形状: [steps, batch, heads, seq_len, context_len] (每步已经是所有层的平均)
+            avg_attention_weights = all_attention_weights.mean(dim=(0, 1, 2))  # [seq_len, context_len]
             avg_save_path = os.path.join(self.attention_output_dir, "average_cross_attention_map.png")
             self.attention_visualizer.visualize_attention_step(
                 avg_attention_weights.unsqueeze(0).unsqueeze(0),  # 添加batch和head维度
@@ -878,22 +878,29 @@ class WanT2V:
                         print(f"🔍 第一个权重形状: {captured_attention[0].shape}")
             
             if captured_attention:
-                # 使用所有捕获的权重，而不是只使用第一个
-                # 将所有权重堆叠起来：[num_layers, batch, heads, seq_len, context_len]
-                all_attention_weights = torch.stack(captured_attention)
-                
+                # 直接在GPU上计算平均，避免堆叠所有张量
+                # 这样可以节省大量内存
                 if self.rank == 0:
                     print(f"🔍 捕获了 {len(captured_attention)} 个attention权重")
-                    print(f"🔍 堆叠后的权重形状: {all_attention_weights.shape}")
-                    print(f"🔍 权重范围: {all_attention_weights.min():.4f} - {all_attention_weights.max():.4f}")
                 
-                # 将堆叠的权重添加到历史记录中
-                self.attention_weights_history.append(all_attention_weights)
+                # 计算所有层的平均attention权重
+                # 使用累积平均的方式，避免一次性堆叠所有张量
+                avg_attention_weights = captured_attention[0].clone()  # 从第一个开始
+                for i in range(1, len(captured_attention)):
+                    avg_attention_weights += captured_attention[i]
+                avg_attention_weights /= len(captured_attention)
+                
+                if self.rank == 0:
+                    print(f"🔍 平均后的权重形状: {avg_attention_weights.shape}")
+                    print(f"🔍 权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
+                
+                # 将平均后的权重添加到历史记录中
+                self.attention_weights_history.append(avg_attention_weights)
                 
                 if self.rank == 0:
                     model_type = "高噪声专家" if timestep.item() >= self.boundary * self.num_train_timesteps else "低噪声专家"
                     print(f"🔍 捕获{model_type}真实注意力权重 - Step {step_idx+1}")
-                    print(f"🔍 包含 {len(captured_attention)} 个attention层的权重")
+                    print(f"🔍 已平均 {len(captured_attention)} 个attention层的权重")
             else:
                 if self.rank == 0:
                     print(f"⚠️ 未捕获到真实attention权重，跳过Step {step_idx+1}")
