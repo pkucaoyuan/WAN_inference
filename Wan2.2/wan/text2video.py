@@ -396,13 +396,20 @@ class WanT2V:
             context = [t.to(self.device) for t in context]
             context_null = [t.to(self.device) for t in context_null]
 
-        # 使用减半后的target_shape生成noise（高噪声专家）
+        # 根据优化方法选择初始噪声形状
+        if enable_half_frame_generation or enable_improved_frame_completion:
+            # 使用减半后的target_shape生成noise（高噪声专家）
+            initial_target_shape = half_target_shape
+        else:
+            # 使用完整帧数的target_shape生成noise
+            initial_target_shape = full_target_shape
+            
         noise = [
             torch.randn(
-                half_target_shape[0],
-                half_target_shape[1],
-                half_target_shape[2],
-                half_target_shape[3],
+                initial_target_shape[0],
+                initial_target_shape[1],
+                initial_target_shape[2],
+                initial_target_shape[3],
                 dtype=torch.float32,
                 device=self.device,
                 generator=seed_g)
@@ -451,7 +458,7 @@ class WanT2V:
             latents = noise
 
             # 根据当前阶段使用不同的seq_len
-            if enable_half_frame_generation:
+            if enable_half_frame_generation or enable_improved_frame_completion:
                 current_seq_len = half_seq_len  # 高噪声专家使用减半的seq_len
             else:
                 current_seq_len = full_seq_len
@@ -546,7 +553,7 @@ class WanT2V:
                     # 改进的帧数补全：偶数帧复制前一个奇数帧
                     for i in range(target_frames):
                         if i % 2 == 0:  # 偶数帧（0, 2, 4, ...）
-                            # 复制前一个奇数帧，如果不存在则复制当前帧
+                            # 复制前一个奇数帧
                             source_idx = min(i // 2, current_frames - 1)
                             new_latents[:, i, :, :] = latents[0][:, source_idx, :, :]
                         else:  # 奇数帧（1, 3, 5, ...）
