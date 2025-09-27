@@ -919,30 +919,19 @@ class WanT2V:
                 should_visualize = (step_idx + 1) % step_interval == 0
                 
                 if should_visualize and self.rank == 0:
-                    # 使用第一个层的权重进行可视化，保持原始数值范围
+                    # 只使用第一个层的权重进行可视化，保持原始数值范围
                     single_layer_weights = captured_attention[0]  # 使用第一个层，形状[1, 40, 3600, 512]
-                    print(f"🔍 单层权重形状: {single_layer_weights.shape}")
-                    print(f"🔍 单层权重范围: {single_layer_weights.min():.4f} - {single_layer_weights.max():.4f}")
+                    print(f"🔍 使用第一个层权重，形状: {single_layer_weights.shape}")
+                    print(f"🔍 权重范围: {single_layer_weights.min():.4f} - {single_layer_weights.max():.4f}")
                     
                     # 立即生成当前步的可视化
                     self._visualize_current_step(single_layer_weights, step_idx)
-                
-                # 计算所有层的平均attention权重（用于其他用途）
-                # 使用累积平均的方式，避免一次性堆叠所有张量
-                avg_attention_weights = captured_attention[0].clone()  # 从第一个开始
-                for i in range(1, len(captured_attention)):
-                    avg_attention_weights += captured_attention[i]
-                avg_attention_weights /= len(captured_attention)
-                
-                if self.rank == 0:
-                    print(f"🔍 平均后的权重形状: {avg_attention_weights.shape}")
-                    print(f"🔍 平均权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
                 
                 # 不保存到历史记录中，直接释放内存
                 if self.rank == 0:
                     model_type = "高噪声专家" if timestep.item() >= self.boundary * self.num_train_timesteps else "低噪声专家"
                     print(f"🔍 捕获{model_type}真实注意力权重 - Step {step_idx+1}")
-                    print(f"🔍 已平均 {len(captured_attention)} 个attention层的权重")
+                    print(f"🔍 捕获了 {len(captured_attention)} 个attention层，仅使用第一个层进行可视化")
                     if should_visualize:
                         print(f"🔍 已生成Step {step_idx+1}的可视化图")
                     print(f"🔍 已释放Step {step_idx+1}的attention权重内存")
