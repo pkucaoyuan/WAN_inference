@@ -358,7 +358,7 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
-            F = frame_num
+        F = frame_num
             
         # 计算减半后的target_shape和seq_len（用于高噪声专家）
         half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
@@ -549,7 +549,7 @@ class WanT2V:
                     current_frames = latents[0].shape[1]  # 当前完整帧数
                     
                     if self.rank == 0:
-                        print(f"🔍 当前帧数: {current_frames}")
+                        print(f"🔍 当前latent帧数: {current_frames}")
                         print(f"🔍 开始替换偶数帧...")
                     
                     # 改进的帧数补全：偶数帧复制前一个奇数帧（模拟半帧生成效果）
@@ -570,6 +570,7 @@ class WanT2V:
                         print(f"✅ 改进帧数补全完成: 共替换了{replaced_count}个偶数帧")
                         print(f"🔍 最终latents形状: {latents[0].shape}")
                         print(f"🔍 最终latents值范围: [{latents[0].min():.4f}, {latents[0].max():.4f}]")
+                        print(f"🔍 替换后的latents将传入低噪声专家继续处理")
                     
                     # 更新seq_len为完整帧数的seq_len（低噪声专家使用）
                     current_seq_len = full_seq_len
@@ -661,7 +662,14 @@ class WanT2V:
                         print(f"🔄 Scheduler状态已重新初始化，避免维度不匹配")
                 
                 # 更新latents（在帧数补全之后）
-                latents = [temp_x0.squeeze(0)]
+                if enable_improved_frame_completion and is_high_noise_phase and step_idx == max(high_noise_steps):
+                    # 改进帧数补全：使用修改后的latents
+                    if self.rank == 0:
+                        print(f"🔍 使用改进帧数补全后的latents: {latents[0].shape}")
+                    # latents已经在改进帧数补全中修改，直接使用
+                else:
+                    # 正常情况：使用scheduler的输出
+                    latents = [temp_x0.squeeze(0)]
 
                 # 记录每步推理时间
                 step_end_time = time.time()
