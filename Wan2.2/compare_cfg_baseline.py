@@ -14,14 +14,30 @@ from pathlib import Path
 # 添加项目路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from wan.text2video import WanT2V
-from wan.configs import SIZE_CONFIGS
+import wan
+from wan.configs import SIZE_CONFIGS, WAN_CONFIGS
 
 
-def load_model(ckpt_dir, device):
+def load_model(ckpt_dir, device, task="t2v-A14B"):
     """加载模型"""
     print("🔄 加载模型...")
-    model = WanT2V(ckpt_dir=ckpt_dir, device=device)
+    
+    # 获取配置
+    cfg = WAN_CONFIGS[task]
+    
+    # 创建WanT2V实例
+    model = wan.WanT2V(
+        config=cfg,
+        checkpoint_dir=ckpt_dir,
+        device_id=int(device.split(':')[-1]) if ':' in device else 0,
+        rank=0,
+        t5_fsdp=False,
+        dit_fsdp=False,
+        use_sp=False,
+        t5_cpu=False,
+        init_on_cpu=True,
+        convert_model_dtype=False,
+    )
     print("✅ 模型加载完成")
     return model
 
@@ -46,16 +62,18 @@ def generate_video(model, prompt, size, frame_num, sample_steps,
         torch.cuda.manual_seed_all(seed)
     
     # 生成视频
-    result = model.generate(
-        prompt=prompt,
+    video, timing_info = model.generate(
+        input_prompt=prompt,
         size=size,
         frame_num=frame_num,
-        sample_steps=sample_steps,
+        sampling_steps=sample_steps,
         cfg_truncate_steps=cfg_truncate_steps,
         cfg_truncate_high_noise_steps=cfg_truncate_high_noise_steps,
         output_dir=output_dir,
         seed=seed
     )
+    
+    result = {'video': video}
     
     print(f"✅ {method_name} 生成完成")
     return result
@@ -197,7 +215,7 @@ def main():
     print(f"🎲 随机种子: {args.seed}")
     
     # 加载模型
-    model = load_model(args.ckpt_dir, args.device)
+    model = load_model(args.ckpt_dir, args.device, args.task)
     
     # 方法1: CFG截断方法
     cfg_output_dir = os.path.join(args.output_dir, "cfg_truncated")
