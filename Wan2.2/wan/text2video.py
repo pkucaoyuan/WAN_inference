@@ -329,7 +329,7 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
-            F = frame_num
+        F = frame_num
             
         # 计算减半后的target_shape和seq_len（用于高噪声专家）
         half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
@@ -708,23 +708,29 @@ class WanT2V:
     def _visualize_current_step(self, attention_weights, step_idx):
         """立即生成当前步的可视化"""
         try:
-            # 获取tokenizer和tokens
-            tokens = self._get_tokens_from_prompt("A beautiful sunset over the ocean")  # 使用默认prompt
+            # 获取实际输入的tokens
+            tokens = self._get_tokens_from_prompt(self.prompt)
             
             # 平均当前步的所有批次和注意力头
             # attention_weights形状: [batch, heads, seq_len, context_len]
             avg_attention_weights = attention_weights.mean(dim=(0, 1))  # [seq_len, context_len]
             
-            # 创建当前step的平均cross attention map的可视化
+            # 只使用前6个token对应的attention权重
+            if len(tokens) <= 6:
+                # 如果tokens少于等于6个，只取对应的attention权重
+                token_attention_weights = avg_attention_weights[:, :len(tokens)]
+                used_tokens = tokens
+            else:
+                # 如果tokens超过6个，只取前6个
+                token_attention_weights = avg_attention_weights[:, :6]
+                used_tokens = tokens[:6]
+            
+            # 创建当前step的cross attention map可视化
             step_save_path = os.path.join(self.attention_output_dir, f"step_{step_idx+1:02d}_cross_attention_map.png")
             self.attention_visualizer.visualize_attention_step(
-                avg_attention_weights,  # 直接传递已平均的权重，形状[seq_len, context_len]
-                tokens, step_idx, step_save_path, title=f"Step {step_idx+1} Cross Attention Map"
+                token_attention_weights,  # 只使用前6个token的权重
+                used_tokens, step_idx, step_save_path, title=f"Step {step_idx+1} Cross Attention Map"
             )
-            
-            print(f"✅ Step {step_idx+1} Cross Attention Map已保存到: {step_save_path}")
-            print(f"📊 权重形状: {avg_attention_weights.shape}")
-            print(f"📊 权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
             
         except Exception as e:
             print(f"❌ 生成Step {step_idx+1}可视化时出错: {e}")
@@ -768,10 +774,12 @@ class WanT2V:
             from transformers import T5Tokenizer
             tokenizer = T5Tokenizer.from_pretrained("t5-base")
             tokens = tokenizer.tokenize(prompt)
+            # 只返回前6个token
+            return tokens[:6]
         except:
             # 简单的tokenization
             tokens = prompt.split()
-        return tokens
+            return tokens[:6]
     
     def _call_model_with_attention_capture(self, model, latent_model_input, timestep, model_kwargs, step_idx):
         """调用模型并捕获真实的注意力权重"""
@@ -783,102 +791,40 @@ class WanT2V:
         
         def attention_hook(module, input, output):
             """Hook函数：捕获真实的cross attention权重"""
-            # 检查是否是WanCrossAttention模块
             if hasattr(module, '__class__') and 'WanCrossAttention' in module.__class__.__name__:
                 try:
-                    # 调试信息：打印输入参数
-                    if self.rank == 0:
-                        print(f"🔍 Hook被调用 - 模块: {module.__class__.__name__}")
-                        print(f"🔍 输入参数数量: {len(input) if input else 0}")
-                        for i, inp in enumerate(input):
-                            if hasattr(inp, 'shape'):
-                                print(f"🔍 输入[{i}] 形状: {inp.shape}")
-                            else:
-                                print(f"🔍 输入[{i}] 类型: {type(inp)}")
-                    
-                    # 从input中提取参数
-                    # WanCrossAttention.forward(x, context, context_lens)
                     if len(input) >= 3:
                         x, context, context_lens = input[:3]
                         
-                        # 直接计算attention权重，使用WanCrossAttention的内部逻辑
                         b, n, d = x.size(0), module.num_heads, module.head_dim
                         
-                        # 计算Q, K, V
                         q = module.norm_q(module.q(x)).view(b, -1, n, d)
                         k = module.norm_k(module.k(context)).view(b, -1, n, d)
                         v = module.v(context).view(b, -1, n, d)
                         
-                        # 调试信息：打印Q, K的形状
-                        if self.rank == 0:
-                            print(f"🔍 Q形状: {q.shape}")
-                            print(f"🔍 K形状: {k.shape}")
-                            print(f"🔍 V形状: {v.shape}")
-                        
-                        # 使用标准的attention计算，而不是flash_attention
-                        # 因为我们需要获取attention权重
                         scale = 1.0 / (d ** 0.5)
                         
-                        # 计算attention scores
-                        # q: [1, 3600, 40, 128], k: [1, 512, 40, 128]
-                        # 需要重新排列维度以正确计算attention
-                        # 将q和k重新排列为 [b, n, seq_len, d] 格式
                         q = q.transpose(1, 2)  # [1, 40, 3600, 128]
                         k = k.transpose(1, 2)  # [1, 40, 512, 128]
                         
-                        # 现在计算scores: [1, 40, 3600, 128] @ [1, 40, 128, 512] = [1, 40, 3600, 512]
-                        try:
-                            scores = torch.matmul(q, k.transpose(-2, -1)) * scale
-                            if self.rank == 0:
-                                print(f"🔍 scores形状: {scores.shape}")
-                        except Exception as e:
-                            if self.rank == 0:
-                                print(f"⚠️ 计算scores时出错: {e}")
-                                print(f"⚠️ q.shape: {q.shape}")
-                                print(f"⚠️ k.shape: {k.shape}")
-                                print(f"⚠️ k.transpose(-2, -1).shape: {k.transpose(-2, -1).shape}")
-                            raise e
+                        scores = torch.matmul(q, k.transpose(-2, -1)) * scale
                         
-                        # 处理变长序列：使用context_lens来mask
                         if context_lens is not None:
-                            # 创建mask: [b, 1, 1, 512]
-                            max_len = k.size(2)  # 512 (k现在是[b, n, seq_len, d])
+                            max_len = k.size(2)
                             mask = torch.arange(max_len, device=k.device).expand(b, max_len) < context_lens.unsqueeze(1)
-                            mask = mask.unsqueeze(1).unsqueeze(1)  # [b, 1, 1, 512]
-                            
-                            # 应用mask到scores
+                            mask = mask.unsqueeze(1).unsqueeze(1)
                             scores = scores.masked_fill(~mask, float('-inf'))
                         
-                        # 计算attention权重
                         attention_weights = torch.softmax(scores, dim=-1)
                         
-                        # 确保attention_weights是张量
                         if isinstance(attention_weights, torch.Tensor):
                             captured_attention.append(attention_weights)
-                            if self.rank == 0:
-                                print(f"🔍 成功捕获真实cross attention权重: {attention_weights.shape}")
-                                print(f"🔍 模块名称: {module.__class__.__name__}")
-                                print(f"🔍 权重范围: {attention_weights.min():.4f} - {attention_weights.max():.4f}")
-                    else:
-                        if self.rank == 0:
-                            print(f"⚠️ 输入参数不足，无法计算cross_attn")
-                            print(f"⚠️ 期望3个参数，实际得到{len(input)}个")
                 except Exception as e:
-                    if self.rank == 0:
-                        print(f"⚠️ 无法获取真实attention权重: {e}")
-                        print(f"⚠️ 模块类型: {type(module)}")
-                        print(f"⚠️ 输入参数数量: {len(input) if input else 0}")
+                    pass
         
         # 注册hook到WanCrossAttention模块，而不是WanAttentionBlock
         hooks = []
         cross_attention_found = 0
-        
-        # 先打印所有模块名称，方便调试
-        if self.rank == 0:
-            print(f"🔍 模型中的所有模块:")
-            for name, module in model.named_modules():
-                if hasattr(module, '__class__') and 'WanCrossAttention' in module.__class__.__name__:
-                    print(f"   - {name} ({module.__class__.__name__}) - WanCrossAttention")
         
         for name, module in model.named_modules():
             # 直接查找WanCrossAttention模块
@@ -886,66 +832,23 @@ class WanT2V:
                 hook = module.register_forward_hook(attention_hook)
                 hooks.append(hook)
                 cross_attention_found += 1
-                if self.rank == 0:
-                    print(f"🔍 注册hook到WanCrossAttention模块: {name} ({module.__class__.__name__})")
-        
-        if self.rank == 0:
-            print(f"🔍 总共找到 {cross_attention_found} 个WanCrossAttention模块")
-            print(f"🔍 注册了 {len(hooks)} 个hook")
         
         try:
-            # 调用模型，不传递return_attention参数
-            if self.rank == 0:
-                print(f"🔍 调用模型参数: {list(model_kwargs.keys())}")
-            
             result = model(latent_model_input, timestep, **model_kwargs)[0]
             
-            # 处理捕获的attention权重
-            if self.rank == 0:
-                print(f"🔍 捕获的attention权重数量: {len(captured_attention)}")
-                if captured_attention:
-                    print(f"🔍 第一个权重类型: {type(captured_attention[0])}")
-                    if hasattr(captured_attention[0], 'shape'):
-                        print(f"🔍 第一个权重形状: {captured_attention[0].shape}")
-            
             if captured_attention:
-                # 直接在GPU上计算平均，避免堆叠所有张量
-                # 这样可以节省大量内存
-                if self.rank == 0:
-                    print(f"🔍 捕获了 {len(captured_attention)} 个attention权重")
-                
                 # 检查是否需要立即生成可视化
                 step_interval = 2
                 should_visualize = (step_idx + 1) % step_interval == 0
                 
                 if should_visualize and self.rank == 0:
-                    # 只使用第一个层的权重进行可视化，保持原始数值范围
-                    single_layer_weights = captured_attention[0]  # 使用第一个层，形状[1, 40, 3600, 512]
-                    print(f"🔍 使用第一个层权重，形状: {single_layer_weights.shape}")
-                    print(f"🔍 权重范围: {single_layer_weights.min():.4f} - {single_layer_weights.max():.4f}")
-                    
-                    # 立即生成当前步的可视化
+                    # 只使用第一个层的权重进行可视化
+                    single_layer_weights = captured_attention[0]
                     self._visualize_current_step(single_layer_weights, step_idx)
-                
-                # 不保存到历史记录中，直接释放内存
-                if self.rank == 0:
-                    model_type = "高噪声专家" if timestep.item() >= self.boundary * self.num_train_timesteps else "低噪声专家"
-                    print(f"🔍 捕获{model_type}真实注意力权重 - Step {step_idx+1}")
-                    print(f"🔍 捕获了 {len(captured_attention)} 个attention层，仅使用第一个层进行可视化")
-                    if should_visualize:
-                        print(f"🔍 已生成Step {step_idx+1}的可视化图")
-                    print(f"🔍 已释放Step {step_idx+1}的attention权重内存")
-            else:
-                if self.rank == 0:
-                    print(f"⚠️ 未捕获到真实attention权重，跳过Step {step_idx+1}")
-                    print(f"⚠️ 可能原因:")
-                    print(f"   - Hook没有正确注册")
-                    print(f"   - WanCrossAttention模块没有执行")
-                    print(f"   - 模型结构发生变化")
+                    print(f"✅ Step {step_idx+1} 可视化完成")
             
             return result
             
         finally:
-            # 移除hooks
             for hook in hooks:
                 hook.remove()
