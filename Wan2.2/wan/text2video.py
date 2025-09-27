@@ -701,7 +701,28 @@ class WanT2V:
                 self.high_noise_model.cpu()
                 torch.cuda.empty_cache()
             if self.rank == 0:
+                print(f"🔍 VAE解码前latents信息:")
+                print(f"  latents形状: {x0[0].shape}")
+                print(f"  latent帧数: {x0[0].shape[1]}")
+                print(f"  期望输出帧数: {frame_num}")
+                print(f"  VAE stride: {self.vae_stride}")
+                
                 videos = self.vae.decode(x0)
+                
+                print(f"🔍 VAE解码后视频信息:")
+                print(f"  视频形状: {videos.shape}")
+                print(f"  实际输出帧数: {videos.shape[1]}")
+                print(f"  期望输出帧数: {frame_num}")
+                if videos.shape[1] != frame_num:
+                    print(f"⚠️ 警告: 实际帧数({videos.shape[1]}) != 期望帧数({frame_num})")
+                else:
+                    print(f"✅ 帧数匹配正确")
+                
+                # 计算预期时长
+                expected_duration = frame_num / 16.0  # 假设FPS=16
+                actual_duration = videos.shape[1] / 16.0
+                print(f"  期望时长: {expected_duration:.2f}秒 (FPS=16)")
+                print(f"  实际时长: {actual_duration:.2f}秒 (FPS=16)")
 
         del noise, latents
         del sample_scheduler
