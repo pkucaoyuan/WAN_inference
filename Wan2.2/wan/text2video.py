@@ -706,9 +706,12 @@ class WanT2V:
                 print(f"  latents形状: {x0[0].shape}")
                 print(f"  latent帧数: {x0[0].shape[1]}")
                 print(f"  期望输出帧数: {frame_num}")
-                if x0[0].shape[1] != frame_num // self.vae_stride[0]:
-                    print(f"⚠️ 警告: latent帧数({x0[0].shape[1]}) != 期望latent帧数({frame_num // self.vae_stride[0]})")
+                expected_latent_frames = (frame_num - 1) // self.vae_stride[0] + 1
+                if x0[0].shape[1] != expected_latent_frames:
+                    print(f"⚠️ 警告: latent帧数({x0[0].shape[1]}) != 期望latent帧数({expected_latent_frames})")
                     print(f"  这可能导致最终输出帧数不正确")
+                else:
+                    print(f"✅ latent帧数匹配正确: {x0[0].shape[1]}帧")
             if offload_model:
                 self.low_noise_model.cpu()
                 self.high_noise_model.cpu()
