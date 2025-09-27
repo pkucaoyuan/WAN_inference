@@ -266,6 +266,7 @@ class WanT2V:
                  attention_output_dir="attention_outputs",
                  enable_error_analysis=False,
                  error_output_dir="error_analysis_outputs",
+                 enable_improved_frame_completion=False,
 ):
         r"""
         Generates video frames from text prompt using diffusion process.
@@ -299,6 +300,9 @@ class WanT2V:
             cfg_truncate_high_noise_steps (`int`, *optional*, defaults to 3):
                 Number of final steps in high-noise phase to skip conditional forward pass.
                 Applied before switching to low-noise expert.
+            enable_improved_frame_completion (`bool`, *optional*, defaults to False):
+                Enable improved frame completion method. When switching from high-noise to low-noise expert,
+                duplicate odd frames to even positions to maintain seed consistency without restarting scheduler.
 
         Returns:
             torch.Tensor:
@@ -518,8 +522,47 @@ class WanT2V:
                     return_dict=False,
                     generator=seed_g)[0]
                 
-                # 帧数减半优化：在高噪声专家结束时进行帧数补全（在scheduler.step之后）
-                if enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps):
+                # 改进的帧数补全：在高噪声专家结束时进行帧数补全（在scheduler.step之后）
+                if enable_improved_frame_completion and is_high_noise_phase and step_idx == max(high_noise_steps):
+                    if self.rank == 0:
+                        print(f"🔄 高噪声专家结束，开始改进帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
+                    
+                    # 计算当前帧数和目标帧数
+                    current_frames = latents[0].shape[1]  # 当前帧数
+                    target_frames = full_target_shape[1]  # 目标帧数
+                    
+                    # 创建新的latents tensor: [C, target_frames, H, W]
+                    new_latents = torch.zeros(
+                        latents[0].shape[0], target_frames, 
+                        latents[0].shape[2], latents[0].shape[3],
+                        device=latents[0].device, dtype=latents[0].dtype
+                    )
+                    
+                    # 改进的帧数补全：偶数帧复制前一个奇数帧
+                    for i in range(target_frames):
+                        if i % 2 == 0:  # 偶数帧（0, 2, 4, ...）
+                            # 复制前一个奇数帧，如果不存在则复制当前帧
+                            source_idx = min(i // 2, current_frames - 1)
+                            new_latents[:, i, :, :] = latents[0][:, source_idx, :, :]
+                        else:  # 奇数帧（1, 3, 5, ...）
+                            # 直接使用对应的帧
+                            source_idx = min(i // 2, current_frames - 1)
+                            new_latents[:, i, :, :] = latents[0][:, source_idx, :, :]
+                    
+                    # 更新latents
+                    latents[0] = new_latents
+                    
+                    # 更新seq_len为完整帧数的seq_len（低噪声专家使用）
+                    current_seq_len = full_seq_len
+                    arg_c = {'context': context, 'seq_len': current_seq_len}
+                    arg_null = {'context': context_null, 'seq_len': current_seq_len}
+                    
+                    if self.rank == 0:
+                        print(f"✅ 改进帧数补全完成: {latents[0].shape[1]}帧 (偶数帧复制前一个奇数帧)")
+                        print(f"🔄 无需重新初始化scheduler，保持种子一致性")
+                
+                # 原有的帧数减半优化：在高噪声专家结束时进行帧数补全（在scheduler.step之后）
+                elif enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps):
                     if self.rank == 0:
                         print(f"🔄 高噪声专家结束，开始帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
                     

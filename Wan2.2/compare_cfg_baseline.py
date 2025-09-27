@@ -44,7 +44,8 @@ def load_model(ckpt_dir, device, task="t2v-A14B"):
 
 def generate_video(model, prompt, size, frame_num, sample_steps, 
                   cfg_truncate_steps, cfg_truncate_high_noise_steps, 
-                  seed, output_dir, method_name):
+                  seed, output_dir, method_name, enable_half_frame_generation=False,
+                  enable_improved_frame_completion=False):
     """生成视频并返回结果"""
     print(f"\n🎬 开始生成 ({method_name})...")
     print(f"📝 提示词: {prompt}")
@@ -53,6 +54,8 @@ def generate_video(model, prompt, size, frame_num, sample_steps,
     print(f"🔄 采样步数: {sample_steps}")
     print(f"⚙️ CFG截断步数: {cfg_truncate_steps}")
     print(f"⚙️ 高噪声CFG截断步数: {cfg_truncate_high_noise_steps}")
+    print(f"🎞️ 帧数减半优化: {enable_half_frame_generation}")
+    print(f"🔄 改进帧数补全: {enable_improved_frame_completion}")
     print(f"🎲 种子: {seed}")
     
     # 设置随机种子确保可重复性
@@ -70,7 +73,9 @@ def generate_video(model, prompt, size, frame_num, sample_steps,
         cfg_truncate_steps=cfg_truncate_steps,
         cfg_truncate_high_noise_steps=cfg_truncate_high_noise_steps,
         output_dir=output_dir,
-        seed=seed
+        seed=seed,
+        enable_half_frame_generation=enable_half_frame_generation,
+        enable_improved_frame_completion=enable_improved_frame_completion
     )
     
     result = {'video': video}
@@ -201,6 +206,11 @@ def main():
     parser.add_argument('--device', type=str, default='cuda', help='设备')
     parser.add_argument('--cfg_truncate_steps', type=int, default=5, help='CFG截断步数')
     parser.add_argument('--cfg_truncate_high_noise_steps', type=int, default=3, help='高噪声CFG截断步数')
+    parser.add_argument('--enable_half_frame_generation', action='store_true', help='启用帧数减半优化')
+    parser.add_argument('--enable_improved_frame_completion', action='store_true', help='启用改进的帧数补全（偶数帧复制前一个奇数帧）')
+    parser.add_argument('--comparison_mode', type=str, default='cfg_vs_baseline', 
+                       choices=['cfg_vs_baseline', 'half_vs_baseline', 'cfg_vs_half', 'improved_vs_baseline'],
+                       help='比较模式')
     
     args = parser.parse_args()
     
@@ -217,50 +227,167 @@ def main():
     # 加载模型
     model = load_model(args.ckpt_dir, args.device, args.task)
     
-    # 方法1: CFG截断方法
-    cfg_output_dir = os.path.join(args.output_dir, "cfg_truncated")
-    result_cfg = generate_video(
-        model=model,
-        prompt=args.prompt,
-        size=size,
-        frame_num=args.frame_num,
-        sample_steps=args.sample_steps,
-        cfg_truncate_steps=args.cfg_truncate_steps,
-        cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps,
-        seed=args.seed,
-        output_dir=cfg_output_dir,
-        method_name="CFG截断方法"
-    )
-    
-    # 方法2: Baseline (无截断)
-    baseline_output_dir = os.path.join(args.output_dir, "baseline")
-    result_baseline = generate_video(
-        model=model,
-        prompt=args.prompt,
-        size=size,
-        frame_num=args.frame_num,
-        sample_steps=args.sample_steps,
-        cfg_truncate_steps=0,
-        cfg_truncate_high_noise_steps=0,
-        seed=args.seed,
-        output_dir=baseline_output_dir,
-        method_name="Baseline方法"
-    )
+    # 根据比较模式生成对应的两种方法
+    if args.comparison_mode == 'cfg_vs_baseline':
+        # 方法1: CFG截断方法
+        method1_output_dir = os.path.join(args.output_dir, "cfg_truncated")
+        result1 = generate_video(
+            model=model,
+            prompt=args.prompt,
+            size=size,
+            frame_num=args.frame_num,
+            sample_steps=args.sample_steps,
+            cfg_truncate_steps=args.cfg_truncate_steps,
+            cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps,
+            seed=args.seed,
+            output_dir=method1_output_dir,
+            method_name="CFG截断方法",
+            enable_half_frame_generation=False,
+            enable_improved_frame_completion=False
+        )
+        
+        # 方法2: Baseline (无截断)
+        method2_output_dir = os.path.join(args.output_dir, "baseline")
+        result2 = generate_video(
+            model=model,
+            prompt=args.prompt,
+            size=size,
+            frame_num=args.frame_num,
+            sample_steps=args.sample_steps,
+            cfg_truncate_steps=0,
+            cfg_truncate_high_noise_steps=0,
+            seed=args.seed,
+            output_dir=method2_output_dir,
+            method_name="Baseline方法",
+            enable_half_frame_generation=False,
+            enable_improved_frame_completion=False
+        )
+        method1_name, method2_name = "CFG截断方法", "Baseline方法"
+        
+    elif args.comparison_mode == 'half_vs_baseline':
+        # 方法1: 帧数减半优化方法
+        method1_output_dir = os.path.join(args.output_dir, "half_frame_optimized")
+        result1 = generate_video(
+            model=model,
+            prompt=args.prompt,
+            size=size,
+            frame_num=args.frame_num,
+            sample_steps=args.sample_steps,
+            cfg_truncate_steps=0,
+            cfg_truncate_high_noise_steps=0,
+            seed=args.seed,
+            output_dir=method1_output_dir,
+            method_name="帧数减半优化方法",
+            enable_half_frame_generation=True,
+            enable_improved_frame_completion=False
+        )
+        
+        # 方法2: Baseline (无截断)
+        method2_output_dir = os.path.join(args.output_dir, "baseline")
+        result2 = generate_video(
+            model=model,
+            prompt=args.prompt,
+            size=size,
+            frame_num=args.frame_num,
+            sample_steps=args.sample_steps,
+            cfg_truncate_steps=0,
+            cfg_truncate_high_noise_steps=0,
+            seed=args.seed,
+            output_dir=method2_output_dir,
+            method_name="Baseline方法",
+            enable_half_frame_generation=False,
+            enable_improved_frame_completion=False
+        )
+        method1_name, method2_name = "帧数减半优化方法", "Baseline方法"
+        
+    elif args.comparison_mode == 'cfg_vs_half':
+        # 方法1: CFG截断方法
+        method1_output_dir = os.path.join(args.output_dir, "cfg_truncated")
+        result1 = generate_video(
+            model=model,
+            prompt=args.prompt,
+            size=size,
+            frame_num=args.frame_num,
+            sample_steps=args.sample_steps,
+            cfg_truncate_steps=args.cfg_truncate_steps,
+            cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps,
+            seed=args.seed,
+            output_dir=method1_output_dir,
+            method_name="CFG截断方法",
+            enable_half_frame_generation=False,
+            enable_improved_frame_completion=False
+        )
+        
+        # 方法2: 帧数减半优化方法
+        method2_output_dir = os.path.join(args.output_dir, "half_frame_optimized")
+        result2 = generate_video(
+            model=model,
+            prompt=args.prompt,
+            size=size,
+            frame_num=args.frame_num,
+            sample_steps=args.sample_steps,
+            cfg_truncate_steps=0,
+            cfg_truncate_high_noise_steps=0,
+            seed=args.seed,
+            output_dir=method2_output_dir,
+            method_name="帧数减半优化方法",
+            enable_half_frame_generation=True,
+            enable_improved_frame_completion=False
+        )
+        method1_name, method2_name = "CFG截断方法", "帧数减半优化方法"
+        
+    elif args.comparison_mode == 'improved_vs_baseline':
+        # 方法1: 改进帧数补全方法
+        method1_output_dir = os.path.join(args.output_dir, "improved_frame_completion")
+        result1 = generate_video(
+            model=model,
+            prompt=args.prompt,
+            size=size,
+            frame_num=args.frame_num,
+            sample_steps=args.sample_steps,
+            cfg_truncate_steps=0,
+            cfg_truncate_high_noise_steps=0,
+            seed=args.seed,
+            output_dir=method1_output_dir,
+            method_name="改进帧数补全方法",
+            enable_half_frame_generation=False,
+            enable_improved_frame_completion=True
+        )
+        
+        # 方法2: Baseline (无截断)
+        method2_output_dir = os.path.join(args.output_dir, "baseline")
+        result2 = generate_video(
+            model=model,
+            prompt=args.prompt,
+            size=size,
+            frame_num=args.frame_num,
+            sample_steps=args.sample_steps,
+            cfg_truncate_steps=0,
+            cfg_truncate_high_noise_steps=0,
+            seed=args.seed,
+            output_dir=method2_output_dir,
+            method_name="Baseline方法",
+            enable_half_frame_generation=False,
+            enable_improved_frame_completion=False
+        )
+        method1_name, method2_name = "改进帧数补全方法", "Baseline方法"
     
     # 计算误差
-    error_stats = calculate_error(
-        result_cfg, result_baseline, 
-        "CFG截断方法", "Baseline方法"
-    )
+    print("\n" + "="*80)
+    print("📊 开始计算误差对比...")
     
-    # 打印报告
-    print_error_report(error_stats, "CFG截断方法", "Baseline方法")
+    error_stats = calculate_error(
+        result1, result2, 
+        method1_name, method2_name
+    )
+    print_error_report(error_stats, method1_name, method2_name)
     
     # 保存误差统计到文件
     error_file = os.path.join(args.output_dir, "error_comparison.txt")
     with open(error_file, 'w', encoding='utf-8') as f:
-        f.write("CFG截断方法 vs Baseline 误差对比\n")
+        f.write(f"{method1_name} vs {method2_name} 误差对比分析\n")
         f.write("="*50 + "\n\n")
+        f.write(f"比较模式: {args.comparison_mode}\n")
         f.write(f"绝对误差平均值: {error_stats['absolute_error']['mean']:.6f}\n")
         f.write(f"绝对误差最大值: {error_stats['absolute_error']['max']:.6f}\n")
         f.write(f"相对误差平均值: {error_stats['relative_error']['mean']:.6f}\n")
