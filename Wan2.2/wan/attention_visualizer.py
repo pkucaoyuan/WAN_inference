@@ -168,8 +168,16 @@ class AttentionVisualizer:
         
         # 转换为numpy数组用于返回
         fig.canvas.draw()
-        img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-        img_array = img_array.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        # 修复matplotlib版本兼容性问题
+        try:
+            img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        except AttributeError:
+            # 新版本matplotlib使用buffer_rgba()
+            img_array = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+            img_array = img_array.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+            img_array = img_array[:, :, :3]  # 只取RGB通道
+        else:
+            img_array = img_array.reshape(fig.canvas.get_width_height()[::-1] + (3,))
         
         plt.close(fig)
         return img_array

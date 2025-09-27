@@ -698,14 +698,32 @@ class WanT2V:
             # 将所有attention权重堆叠并计算平均
             all_attention_weights = torch.stack(self.attention_weights_history)  # [steps, batch, heads, seq_len, context_len]
             
-            # 平均所有步骤、批次和注意力头
-            avg_attention_weights = all_attention_weights.mean(dim=(0, 1, 2))  # [seq_len, context_len]
+            # 每两个step生成一张当前步的平均cross attention图
+            step_interval = 2
+            for step_idx in range(0, len(self.attention_weights_history), step_interval):
+                # 获取当前step的attention权重
+                current_attention = self.attention_weights_history[step_idx]
+                
+                # 平均当前step的所有批次和注意力头
+                avg_attention_weights = current_attention.mean(dim=(0, 1))  # [seq_len, context_len]
+                
+                # 创建当前step的平均cross attention map的可视化
+                step_save_path = os.path.join(self.attention_output_dir, f"step_{step_idx+1:02d}_cross_attention_map.png")
+                self.attention_visualizer.visualize_attention_step(
+                    avg_attention_weights.unsqueeze(0).unsqueeze(0),  # 添加batch和head维度
+                    tokens, step_idx, step_save_path, title=f"Step {step_idx+1} Cross Attention Map"
+                )
+                
+                print(f"Step {step_idx+1} Cross Attention Map已保存到: {step_save_path}")
+                print(f"权重形状: {avg_attention_weights.shape}")
+                print(f"权重范围: {avg_attention_weights.min():.4f} - {avg_attention_weights.max():.4f}")
             
-            # 创建平均cross attention map的可视化
+            # 同时生成所有步骤的平均cross attention map
+            avg_attention_weights = all_attention_weights.mean(dim=(0, 1, 2))  # [seq_len, context_len]
             avg_save_path = os.path.join(self.attention_output_dir, "average_cross_attention_map.png")
             self.attention_visualizer.visualize_attention_step(
                 avg_attention_weights.unsqueeze(0).unsqueeze(0),  # 添加batch和head维度
-                tokens, 0, avg_save_path, title="Average Cross Attention Map"
+                tokens, 0, avg_save_path, title="Average Cross Attention Map (All Steps)"
             )
             
             print(f"平均Cross Attention Map已保存到: {avg_save_path}")
