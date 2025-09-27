@@ -676,7 +676,7 @@ class WanT2V:
                     # latents已经在改进帧数补全中修改，直接使用
                 else:
                     # 正常情况：使用scheduler的输出
-                latents = [temp_x0.squeeze(0)]
+                    latents = [temp_x0.squeeze(0)]
 
                 # 记录每步推理时间
                 step_end_time = time.time()
