@@ -181,6 +181,8 @@ def main():
     parser.add_argument('--seed', type=int, default=42, help='随机种子')
     parser.add_argument('--output_dir', type=str, default='comparison_outputs', help='输出目录')
     parser.add_argument('--device', type=str, default='cuda', help='设备')
+    parser.add_argument('--cfg_truncate_steps', type=int, default=5, help='CFG截断步数')
+    parser.add_argument('--cfg_truncate_high_noise_steps', type=int, default=3, help='高噪声CFG截断步数')
     
     args = parser.parse_args()
     
@@ -205,8 +207,8 @@ def main():
         size=size,
         frame_num=args.frame_num,
         sample_steps=args.sample_steps,
-        cfg_truncate_steps=5,
-        cfg_truncate_high_noise_steps=3,
+        cfg_truncate_steps=args.cfg_truncate_steps,
+        cfg_truncate_high_noise_steps=args.cfg_truncate_high_noise_steps,
         seed=args.seed,
         output_dir=cfg_output_dir,
         method_name="CFG截断方法"
