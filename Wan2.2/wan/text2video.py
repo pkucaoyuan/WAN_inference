@@ -645,6 +645,8 @@ class WanT2V:
                 # 原有的帧数减半优化：在高噪声专家结束后进行帧数补全（在scheduler.step之后）
                 elif enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps) + 1:
                     if self.rank == 0:
+                        print(f"🔍 帧数补全条件检查: enable_half_frame_generation={enable_half_frame_generation}, is_high_noise_phase={is_high_noise_phase}, step_idx={step_idx}, max_high_noise_steps={max(high_noise_steps)}")
+                    if self.rank == 0:
                         print(f"🔄 高噪声专家结束，开始帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
                         print(f"🔍 调试信息: frame_num={frame_num}, F={F}")
                         print(f"🔍 调试信息: half_target_shape={half_target_shape}")
@@ -769,6 +771,7 @@ class WanT2V:
                 elif enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps):
                     # 原始帧数补全：使用修改后的latents
                     if self.rank == 0:
+                        print(f"🔍 Step 12帧数补全条件检查: enable_half_frame_generation={enable_half_frame_generation}, is_high_noise_phase={is_high_noise_phase}, step_idx={step_idx}, max_high_noise_steps={max(high_noise_steps)}")
                         print(f"🔍 使用原始帧数补全后的latents: {latents[0].shape}")
                     # latents已经在原始帧数补全中修改，直接使用
                 else:
