@@ -645,6 +645,8 @@ class WanT2V:
                 # 原有的帧数减半优化：在高噪声专家结束后进行帧数补全（在scheduler.step之后）
                 elif enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps) + 1:
                     if self.rank == 0:
+                        print(f"🔍 Step 13帧数补全条件检查: enable_half_frame_generation={enable_half_frame_generation}, is_high_noise_phase={is_high_noise_phase}, step_idx={step_idx}, max_high_noise_steps={max(high_noise_steps)}")
+                    if self.rank == 0:
                         print(f"🔍 帧数补全条件检查: enable_half_frame_generation={enable_half_frame_generation}, is_high_noise_phase={is_high_noise_phase}, step_idx={step_idx}, max_high_noise_steps={max(high_noise_steps)}")
                     if self.rank == 0:
                         print(f"🔄 高噪声专家结束，开始帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
@@ -769,11 +771,65 @@ class WanT2V:
                         print(f"🔍 使用改进帧数补全后的latents: {latents[0].shape}")
                     # latents已经在改进帧数补全中修改，直接使用
                 elif enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps):
-                    # 原始帧数补全：使用修改后的latents
+                    # 原始帧数补全：在高噪声专家结束时进行帧数补全
                     if self.rank == 0:
                         print(f"🔍 Step 12帧数补全条件检查: enable_half_frame_generation={enable_half_frame_generation}, is_high_noise_phase={is_high_noise_phase}, step_idx={step_idx}, max_high_noise_steps={max(high_noise_steps)}")
+                        print(f"🔄 高噪声专家结束，开始帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
+                        print(f"🔍 调试信息: frame_num={frame_num}, F={F}")
+                        print(f"🔍 调试信息: half_target_shape={half_target_shape}")
+                        print(f"🔍 调试信息: full_target_shape={full_target_shape}")
+                        print(f"🔍 调试信息: vae_stride={self.vae_stride}")
+                    
+                    # 计算当前帧数和目标帧数
+                    current_frames = latents[0].shape[1]  # 当前帧数（减半后经过VAE）
+                    target_frames = full_target_shape[1]  # 目标帧数（完整帧数经过VAE）
+                    
+                    if self.rank == 0:
+                        print(f"🔍 当前帧数: {current_frames}, 目标帧数: {target_frames}")
+                    
+                    # 创建新的latents tensor: [C, target_frames, H, W]
+                    # 使用现有帧的平均值初始化，避免零值导致的噪点
+                    mean_frame = latents[0].mean(dim=1, keepdim=True)  # [C, 1, H, W]
+                    new_latents = mean_frame.expand(
+                        latents[0].shape[0], target_frames, 
+                        latents[0].shape[2], latents[0].shape[3]
+                    ).clone()
+                    
+                    # 考虑奇偶性的帧数补全
+                    if self.rank == 0:
+                        print(f"🔍 开始帧数补全: {current_frames}帧 -> {target_frames}帧")
+                    
+                    if target_frames % 2 == 0:  # 偶帧：每帧都重复
+                        for i in range(current_frames):
+                            if i*2 < target_frames:
+                                new_latents[:, i*2, :, :] = latents[0][:, i, :, :]
+                                if self.rank == 0 and i < 3:  # 只打印前3个
+                                    print(f"  帧{i*2} = 原始帧{i}")
+                            if i*2+1 < target_frames:
+                                new_latents[:, i*2+1, :, :] = latents[0][:, i, :, :]
+                                if self.rank == 0 and i < 3:  # 只打印前3个
+                                    print(f"  帧{i*2+1} = 原始帧{i} (复制)")
+                    else:  # 奇帧：最后一帧不重复
+                        for i in range(current_frames):
+                            if i*2 < target_frames:
+                                new_latents[:, i*2, :, :] = latents[0][:, i, :, :]
+                                if self.rank == 0 and i < 3:  # 只打印前3个
+                                    print(f"  帧{i*2} = 原始帧{i}")
+                            if i*2+1 < target_frames:
+                                new_latents[:, i*2+1, :, :] = latents[0][:, i, :, :]
+                                if self.rank == 0 and i < 3:  # 只打印前3个
+                                    print(f"  帧{i*2+1} = 原始帧{i} (复制)")
+                    
+                    if self.rank == 0:
+                        print(f"🔍 帧数补全完成: 每帧都复制一次")
+                        print(f"🔍 使用平均值初始化避免噪点: {mean_frame.mean():.4f}")
+                    
+                    # 更新latents
+                    latents[0] = new_latents
+                    
+                    if self.rank == 0:
+                        print(f"✅ 原始帧数补全完成: {latents[0].shape[1]}帧")
                         print(f"🔍 使用原始帧数补全后的latents: {latents[0].shape}")
-                    # latents已经在原始帧数补全中修改，直接使用
                 else:
                     # 正常情况：使用scheduler的输出
                     latents = [temp_x0.squeeze(0)]
