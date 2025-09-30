@@ -546,6 +546,11 @@ class WanT2V:
                 if self.rank == 0 and step_idx % 5 == 0:  # 每5步显示一次
                     print(f"🔍 Step {step_idx+1}: 当前seq_len={current_seq_len}, 目标帧数={frame_num}, 当前latent帧数={latents[0].shape[1]}")
                 
+                # 调试：在帧数补全后显示latents状态
+                if self.rank == 0 and enable_half_frame_generation and step_idx == max(high_noise_steps):
+                    print(f"🔍 帧数补全后latents状态: shape={latents[0].shape}, dtype={latents[0].dtype}")
+                    print(f"🔍 帧数补全后seq_len状态: current_seq_len={current_seq_len}, full_seq_len={full_seq_len}")
+                
                 if is_final_steps or is_high_noise_final:
                     # CFG截断：跳过条件前向传播
                     if self.rank == 0:
@@ -869,6 +874,9 @@ class WanT2V:
                         print(f"✅ 原始帧数补全完成: {latents[0].shape[1]}帧")
                         print(f"🔄 立即更新seq_len: {current_seq_len}")
                         print(f"🔍 使用原始帧数补全后的latents: {latents[0].shape}")
+                    
+                    # 重要：帧数补全后，使用补全后的latents，而不是scheduler的输出
+                    # latents已经在上面更新为5帧，直接使用
                 else:
                     # 正常情况：使用scheduler的输出
                     latents = [temp_x0.squeeze(0)]
