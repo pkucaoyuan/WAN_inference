@@ -530,7 +530,7 @@ class WanT2V:
                 
                 # 动态更新模型调用参数（确保使用正确的seq_len）
                 # 检查是否已经完成帧数补全，需要切换到完整帧数的seq_len
-                if enable_half_frame_generation and step_idx > max(high_noise_steps) and current_seq_len != full_seq_len:
+                if enable_half_frame_generation and step_idx > max(high_noise_steps) + 1 and current_seq_len != full_seq_len:
                     # 帧数补全后，使用完整帧数的seq_len
                     current_seq_len = full_seq_len
                     arg_c = {'context': context, 'seq_len': current_seq_len}
@@ -642,8 +642,8 @@ class WanT2V:
                         print(f"✅ 改进帧数补全完成: {latents[0].shape[1]}帧 (偶数帧复制前一个奇数帧)")
                         print(f"🔄 无需重新初始化scheduler，保持种子一致性")
                 
-                # 原有的帧数减半优化：在高噪声专家结束时进行帧数补全（在scheduler.step之后）
-                elif enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps):
+                # 原有的帧数减半优化：在高噪声专家结束后进行帧数补全（在scheduler.step之后）
+                elif enable_half_frame_generation and is_high_noise_phase and step_idx == max(high_noise_steps) + 1:
                     if self.rank == 0:
                         print(f"🔄 高噪声专家结束，开始帧数补全: 从{latents[0].shape[1]}帧补齐到{full_target_shape[1]}帧")
                         print(f"🔍 调试信息: frame_num={frame_num}, F={F}")
