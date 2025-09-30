@@ -502,9 +502,9 @@ class WanT2V:
             else:
                 current_seq_len = full_seq_len
 
+            # 初始化模型调用参数（会在循环中动态更新）
             arg_c = {'context': context, 'seq_len': current_seq_len}
             arg_null = {'context': context_null, 'seq_len': current_seq_len}
-
 
             import time
             for step_idx, t in enumerate(tqdm(timesteps)):
@@ -527,6 +527,16 @@ class WanT2V:
                 high_noise_steps = [i for i, ts in enumerate(timesteps) if ts.item() >= boundary]
                 is_high_noise_final = (is_high_noise_phase and 
                                      step_idx >= (max(high_noise_steps) - cfg_truncate_high_noise_steps + 1))
+                
+                # 动态更新模型调用参数（确保使用正确的seq_len）
+                # 检查是否已经进入低噪声阶段（帧数补全后）
+                if enable_half_frame_generation and not is_high_noise_phase and current_seq_len != full_seq_len:
+                    # 进入低噪声阶段，使用完整帧数的seq_len
+                    current_seq_len = full_seq_len
+                    arg_c = {'context': context, 'seq_len': current_seq_len}
+                    arg_null = {'context': context_null, 'seq_len': current_seq_len}
+                    if self.rank == 0:
+                        print(f"🔄 切换到低噪声阶段，更新seq_len: {current_seq_len}")
                 
                 # 准备模型调用参数
                 model_kwargs_c = {**arg_c}
@@ -699,25 +709,34 @@ class WanT2V:
                         sample_scheduler.set_timesteps(
                             sampling_steps, device=self.device, shift=shift)
                         # 重新获取时间步序列
-                        timesteps = sample_scheduler.timesteps
+                        new_timesteps = sample_scheduler.timesteps
                         # 正确设置当前步骤索引
                         sample_scheduler._step_index = step_idx + 1
+                        if self.rank == 0:
+                            print(f"🔄 时间步序列已更新: {len(timesteps)} -> {len(new_timesteps)}")
+                            print(f"🔄 当前步骤索引: {sample_scheduler._step_index}")
                     elif sample_solver == 'dpm++':
                         sample_scheduler = FlowDPMSolverMultistepScheduler(
                             num_train_timesteps=self.num_train_timesteps,
                             shift=1,
                             use_dynamic_shifting=False)
                         sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
-                        timesteps, _ = retrieve_timesteps(
+                        new_timesteps, _ = retrieve_timesteps(
                             sample_scheduler,
                             device=self.device,
                             sigmas=sampling_sigmas)
                         # 正确设置当前步骤索引
                         sample_scheduler._step_index = step_idx + 1
+                        if self.rank == 0:
+                            print(f"🔄 时间步序列已更新: {len(timesteps)} -> {len(new_timesteps)}")
+                            print(f"🔄 当前步骤索引: {sample_scheduler._step_index}")
                     
                     # 重新计算专家切换边界和步骤分配
                     boundary = self.boundary * self.num_train_timesteps
-                    high_noise_steps = [i for i, ts in enumerate(timesteps) if ts.item() >= boundary]
+                    high_noise_steps = [i for i, ts in enumerate(new_timesteps) if ts.item() >= boundary]
+                    
+                    # 重要：更新循环中使用的时间步序列
+                    timesteps = new_timesteps
                     
                     if self.rank == 0:
                         print(f"🔄 重新初始化scheduler后:")
