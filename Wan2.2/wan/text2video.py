@@ -392,15 +392,15 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
-            F = frame_num
+        F = frame_num
             
         # 计算减半后的target_shape和seq_len（用于高噪声专家）
         half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
-                            size[1] // self.vae_stride[1],
-                            size[0] // self.vae_stride[2])
+                        size[1] // self.vae_stride[1],
+                        size[0] // self.vae_stride[2])
 
         half_seq_len = math.ceil((half_target_shape[2] * half_target_shape[3]) /
-                                (self.patch_size[1] * self.patch_size[2]) *
+                            (self.patch_size[1] * self.patch_size[2]) *
                                 half_target_shape[1] / self.sp_size) * self.sp_size
         
         # 计算完整帧数的target_shape和seq_len（用于低噪声专家）
@@ -750,7 +750,7 @@ class WanT2V:
                     # latents已经在原始帧数补全中修改，直接使用
                 else:
                     # 正常情况：使用scheduler的输出
-                    latents = [temp_x0.squeeze(0)]
+                latents = [temp_x0.squeeze(0)]
 
                 # 记录每步推理时间
                 step_end_time = time.time()
