@@ -392,7 +392,7 @@ class WanT2V:
             if self.rank == 0:
                 print(f"🎬 帧数减半优化: 第一个专家生成{F}帧，最终补齐到{frame_num}帧")
         else:
-            F = frame_num
+        F = frame_num
             
         # 计算减半后的target_shape和seq_len（用于高噪声专家）
         half_target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
@@ -750,7 +750,7 @@ class WanT2V:
                     # latents已经在原始帧数补全中修改，直接使用
                 else:
                     # 正常情况：使用scheduler的输出
-                    latents = [temp_x0.squeeze(0)]
+                latents = [temp_x0.squeeze(0)]
 
                 # 记录每步推理时间
                 step_end_time = time.time()
@@ -763,6 +763,10 @@ class WanT2V:
                     'expert': 'high_noise' if is_high_noise_phase else 'low_noise'
                 }
                 self.step_timings.append(step_timing)
+                
+                # 调试：输出当前时间步信息
+                if self.rank == 0:
+                    print(f"⏰ Step {step_idx+1}/{len(timesteps)}: t={t.item():.0f}, expert={'high_noise' if is_high_noise_phase else 'low_noise'}, duration={step_duration:.2f}s")
         
         
         # 生成推理报告
