@@ -832,6 +832,39 @@ class WanT2V:
                     arg_c = {'context': context, 'seq_len': current_seq_len}
                     arg_null = {'context': context_null, 'seq_len': current_seq_len}
                     
+                    # 重启scheduler以避免维度不匹配
+                    if sample_solver == 'unipc':
+                        sample_scheduler = FlowUniPCMultistepScheduler(
+                            num_train_timesteps=self.num_train_timesteps,
+                            shift=1,
+                            use_dynamic_shifting=False)
+                        sample_scheduler.set_timesteps(
+                            sampling_steps, device=self.device, shift=shift)
+                        # 重新获取时间步序列
+                        new_timesteps = sample_scheduler.timesteps
+                        # 正确设置当前步骤索引
+                        sample_scheduler._step_index = step_idx + 1
+                        if self.rank == 0:
+                            print(f"🔄 重启scheduler，时间步序列已更新: {len(timesteps)} -> {len(new_timesteps)}")
+                            print(f"🔄 当前步骤索引: {sample_scheduler._step_index}")
+                    elif sample_solver == 'dpm++':
+                        sample_scheduler = FlowDPMSolverMultistepScheduler(
+                            num_train_timesteps=self.num_train_timesteps,
+                            shift=1,
+                            use_dynamic_shifting=False)
+                        sample_scheduler.set_timesteps(
+                            sampling_steps, device=self.device, shift=shift)
+                        # 重新获取时间步序列
+                        new_timesteps = sample_scheduler.timesteps
+                        # 正确设置当前步骤索引
+                        sample_scheduler._step_index = step_idx + 1
+                        if self.rank == 0:
+                            print(f"🔄 重启scheduler，时间步序列已更新: {len(timesteps)} -> {len(new_timesteps)}")
+                            print(f"🔄 当前步骤索引: {sample_scheduler._step_index}")
+                    
+                    # 重要：更新循环中使用的时间步序列
+                    timesteps = new_timesteps
+                    
                     if self.rank == 0:
                         print(f"✅ 原始帧数补全完成: {latents[0].shape[1]}帧")
                         print(f"🔄 立即更新seq_len: {current_seq_len}")
