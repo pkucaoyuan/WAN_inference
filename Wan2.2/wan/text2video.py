@@ -529,18 +529,22 @@ class WanT2V:
                                      step_idx >= (max(high_noise_steps) - cfg_truncate_high_noise_steps + 1))
                 
                 # 动态更新模型调用参数（确保使用正确的seq_len）
-                # 检查是否已经进入低噪声阶段（帧数补全后）
-                if enable_half_frame_generation and not is_high_noise_phase and current_seq_len != full_seq_len:
-                    # 进入低噪声阶段，使用完整帧数的seq_len
+                # 检查是否已经完成帧数补全，需要切换到完整帧数的seq_len
+                if enable_half_frame_generation and step_idx > max(high_noise_steps) and current_seq_len != full_seq_len:
+                    # 帧数补全后，使用完整帧数的seq_len
                     current_seq_len = full_seq_len
                     arg_c = {'context': context, 'seq_len': current_seq_len}
                     arg_null = {'context': context_null, 'seq_len': current_seq_len}
                     if self.rank == 0:
-                        print(f"🔄 切换到低噪声阶段，更新seq_len: {current_seq_len}")
+                        print(f"🔄 帧数补全后，更新seq_len: {current_seq_len}")
                 
                 # 准备模型调用参数
                 model_kwargs_c = {**arg_c}
                 model_kwargs_null = {**arg_null}
+                
+                # 调试：显示当前使用的seq_len
+                if self.rank == 0 and step_idx % 5 == 0:  # 每5步显示一次
+                    print(f"🔍 Step {step_idx+1}: 当前seq_len={current_seq_len}, 目标帧数={frame_num}, 当前latent帧数={latents[0].shape[1]}")
                 
                 if is_final_steps or is_high_noise_final:
                     # CFG截断：跳过条件前向传播
