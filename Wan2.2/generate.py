@@ -490,6 +490,7 @@ def generate(args):
         inference_start = time.time()
         logging.info(f"开始推理...")
         print(f"🎬 CFG截断配置: 低噪声专家{args.cfg_truncate_steps}步, 高噪声专家{args.cfg_truncate_high_noise_steps}步")
+        
         # 创建输出文件夹结构（在推理前创建，以便传递给模型）
         output_base_dir = Path("./outputs")
         output_base_dir.mkdir(exist_ok=True)
@@ -497,7 +498,28 @@ def generate(args):
         # 创建本次推理的子文件夹
         formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         formatted_prompt = args.prompt.replace(" ", "_").replace("/", "_")[:30]
-        run_folder = output_base_dir / f"{args.task}_{formatted_time}_{formatted_prompt}"
+        
+        # 生成方法标识符（全局定义，所有任务都使用）
+        method_identifiers = []
+        if args.cfg_truncate_steps > 0 or args.cfg_truncate_high_noise_steps > 0:
+            method_identifiers.append("cfg")
+        if args.enable_half_frame_generation:
+            method_identifiers.append("half")
+        if args.enable_improved_frame_completion:
+            method_identifiers.append("improved")
+        if args.enable_attention_visualization:
+            method_identifiers.append("attn")
+        if args.enable_debug:
+            method_identifiers.append("debug")
+        if args.enable_error_analysis:
+            method_identifiers.append("error")
+        
+        # 如果没有特殊方法，标记为baseline
+        if not method_identifiers:
+            method_identifiers.append("baseline")
+        
+        method_suffix = "_".join(method_identifiers)
+        run_folder = output_base_dir / f"{args.task}_{formatted_time}_{formatted_prompt}_{method_suffix}_seed{args.base_seed}"
         run_folder.mkdir(exist_ok=True)
         
         video, timing_info = wan_t2v.generate(
@@ -633,7 +655,7 @@ def generate(args):
         
         # 视频文件路径
         if args.save_file is None:
-            video_filename = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{formatted_time}.mp4"
+            video_filename = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{method_suffix}_seed{args.base_seed}_{formatted_time}.mp4"
         else:
             video_filename = Path(args.save_file).name
         video_path = run_folder / video_filename
