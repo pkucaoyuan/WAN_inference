@@ -1303,6 +1303,11 @@ class WanT2V:
             absolute_error = torch.abs(current_output - noise_pred_uncond)
             relative_error = absolute_error / (torch.abs(current_output) + 1e-8)
             
+            # 计算CFG差值（条件输出 - 无条件输出）
+            cfg_diff = current_output - noise_pred_uncond
+            cfg_diff_mean = cfg_diff.mean().item()
+            cfg_diff_std = cfg_diff.std().item()
+            
             # 记录误差数据
             error_data = {
                 'step': step_idx + 1,
@@ -1315,6 +1320,8 @@ class WanT2V:
                 'conditional_output_std': current_output.std().item(),
                 'unconditional_output_mean': noise_pred_uncond.mean().item(),
                 'unconditional_output_std': noise_pred_uncond.std().item(),
+                'cfg_diff_mean': cfg_diff_mean,
+                'cfg_diff_std': cfg_diff_std,
             }
             
             self.error_history.append(error_data)
@@ -1345,54 +1352,34 @@ class WanT2V:
         rel_errors = [data['relative_error_mean'] for data in self.error_history]
         cond_means = [data['conditional_output_mean'] for data in self.error_history]
         uncond_means = [data['unconditional_output_mean'] for data in self.error_history]
+        cfg_diffs = [data['cfg_diff_mean'] for data in self.error_history]
         
-        # 创建图表
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-        fig.suptitle('Error Analysis: Conditional vs Unconditional Model Outputs', fontsize=16, fontweight='bold')
+        # 计算相邻两步的CFG差值变化（差的差）
+        cfg_diff_changes = []
+        for i in range(1, len(cfg_diffs)):
+            change = abs(cfg_diffs[i] - cfg_diffs[i-1])
+            cfg_diff_changes.append(change)
         
-        # 图1: 绝对误差和相对误差随步数变化
-        ax1.plot(steps, abs_errors, 'b-', label='Absolute Error', linewidth=2.5, marker='o', markersize=4)
-        ax1.set_xlabel('Denoising Step', fontsize=12)
-        ax1.set_ylabel('Absolute Error', fontsize=12, color='blue')
-        ax1.set_title('Absolute and Relative Error vs Denoising Steps', fontsize=14, fontweight='bold')
-        ax1.grid(True, alpha=0.3)
-        ax1.legend(loc='upper left', fontsize=10)
-        # 设置x轴刻度为5的倍数
-        step_ticks = [i for i in range(1, max(steps) + 1, 5)]
-        ax1.set_xticks(step_ticks)
+        # 创建图表 - 只显示CFG差值变化
+        fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+        fig.suptitle('相邻两步CFG差值变化分析', fontsize=16, fontweight='bold')
         
-        ax1_twin = ax1.twinx()
-        ax1_twin.plot(steps, rel_errors, 'r-', label='Relative Error', linewidth=2.5, marker='s', markersize=4)
-        ax1_twin.set_ylabel('Relative Error', fontsize=12, color='red')
-        ax1_twin.legend(loc='upper right', fontsize=10)
+        # 绘制相邻两步CFG差值变化（差的差的大小）
+        steps_for_changes = steps[1:]  # 从第2步开始
+        ax.plot(steps_for_changes, cfg_diff_changes, 'purple', label='|CFG_diff(t) - CFG_diff(t-1)|', 
+                linewidth=2.5, marker='o', markersize=6)
+        ax.set_xlabel('去噪步骤 (Denoising Step)', fontsize=13)
+        ax.set_ylabel('相邻两步CFG差值的变化量', fontsize=13)
+        ax.set_title('相邻两步的CFG差值变化（条件输出 - 无条件输出）', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.legend(loc='best', fontsize=11)
         
-        # 图2: 条件输出 vs 无条件输出
-        ax2.plot(steps, cond_means, 'g-', label='Conditional Output', linewidth=2.5, marker='^', markersize=4)
-        ax2.plot(steps, uncond_means, 'orange', label='Unconditional Output', linewidth=2.5, marker='v', markersize=4)
-        ax2.set_xlabel('Denoising Step', fontsize=12)
-        ax2.set_ylabel('Output Mean Value', fontsize=12)
-        ax2.set_title('Conditional vs Unconditional Output Comparison', fontsize=14, fontweight='bold')
-        ax2.grid(True, alpha=0.3)
-        ax2.legend(loc='best', fontsize=10)
-        # 设置x轴刻度为5的倍数
-        step_ticks = [i for i in range(1, max(steps) + 1, 5)]
-        ax2.set_xticks(step_ticks)
-        
-        # 图3: 绝对误差随timestep变化
-        ax3.plot(timesteps, abs_errors, 'b-', label='Absolute Error', linewidth=2.5, marker='o', markersize=4)
-        ax3.set_xlabel('Timestep', fontsize=12)
-        ax3.set_ylabel('Absolute Error', fontsize=12)
-        ax3.set_title('Absolute Error vs Timestep', fontsize=14, fontweight='bold')
-        ax3.grid(True, alpha=0.3)
-        ax3.legend(loc='best', fontsize=10)
-        
-        # 图4: 相对误差随timestep变化
-        ax4.plot(timesteps, rel_errors, 'r-', label='Relative Error', linewidth=2.5, marker='s', markersize=4)
-        ax4.set_xlabel('Timestep', fontsize=12)
-        ax4.set_ylabel('Relative Error', fontsize=12)
-        ax4.set_title('Relative Error vs Timestep', fontsize=14, fontweight='bold')
-        ax4.grid(True, alpha=0.3)
-        ax4.legend(loc='best', fontsize=10)
+        # 设置x轴刻度
+        if len(steps_for_changes) > 20:
+            step_ticks = [i for i in range(min(steps_for_changes), max(steps_for_changes) + 1, 5)]
+        else:
+            step_ticks = steps_for_changes
+        ax.set_xticks(step_ticks)
         
         plt.tight_layout()
         
@@ -1421,6 +1408,13 @@ class WanT2V:
         # 计算统计信息
         abs_errors = [data['absolute_error_mean'] for data in self.error_history]
         rel_errors = [data['relative_error_mean'] for data in self.error_history]
+        cfg_diffs = [data['cfg_diff_mean'] for data in self.error_history]
+        
+        # 计算相邻两步的CFG差值变化
+        cfg_diff_changes = []
+        for i in range(1, len(cfg_diffs)):
+            change = abs(cfg_diffs[i] - cfg_diffs[i-1])
+            cfg_diff_changes.append(change)
         
         report = f"""# Error Analysis Report
 
@@ -1430,35 +1424,36 @@ class WanT2V:
 - **Analysis Time**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ## Statistical Summary
-### Absolute Error
-- **Mean**: {np.mean(abs_errors):.6f}
-- **Std Dev**: {np.std(abs_errors):.6f}
-- **Max**: {np.max(abs_errors):.6f}
-- **Min**: {np.min(abs_errors):.6f}
+### CFG差值相邻两步变化
+- **Mean**: {np.mean(cfg_diff_changes):.6f}
+- **Std Dev**: {np.std(cfg_diff_changes):.6f}
+- **Max**: {np.max(cfg_diff_changes):.6f}
+- **Min**: {np.min(cfg_diff_changes):.6f}
 
-### Relative Error
-- **Mean**: {np.mean(rel_errors):.6f}
-- **Std Dev**: {np.std(rel_errors):.6f}
-- **Max**: {np.max(rel_errors):.6f}
-- **Min**: {np.min(rel_errors):.6f}
+### CFG差值 (条件输出 - 无条件输出)
+- **Mean**: {np.mean(cfg_diffs):.6f}
+- **Std Dev**: {np.std(cfg_diffs):.6f}
+- **Max**: {np.max(cfg_diffs):.6f}
+- **Min**: {np.min(cfg_diffs):.6f}
 
 ## Detailed Data
-| Step | Timestep | Absolute Error | Relative Error | Conditional Output Mean | Unconditional Output Mean |
-|------|----------|----------------|----------------|------------------------|---------------------------|
+| Step | Timestep | CFG Diff Mean | CFG Diff Change |
+|------|----------|---------------|-----------------|
 """
         
-        for data in self.error_history:
-            report += f"| {data['step']} | {data['timestep']:.1f} | {data['absolute_error_mean']:.6f} | {data['relative_error_mean']:.6f} | {data['conditional_output_mean']:.6f} | {data['unconditional_output_mean']:.6f} |\n"
+        for i, data in enumerate(self.error_history):
+            cfg_change = cfg_diff_changes[i-1] if i > 0 else 0.0
+            report += f"| {data['step']} | {data['timestep']:.1f} | {data['cfg_diff_mean']:.6f} | {cfg_change:.6f} |\n"
         
         report += f"""
 ## Analysis Conclusions
-1. **Error Trend**: Changes in absolute and relative errors during denoising process
-2. **Conditional Impact**: Difference between conditional and unconditional outputs
-3. **Convergence**: Whether errors converge as denoising steps progress
+1. **CFG差值趋势**: 条件输出与无条件输出的差值在去噪过程中的变化
+2. **相邻步骤变化**: 相邻两步CFG差值的变化量，反映CFG引导的平滑程度
+3. **变化剧烈点**: 识别CFG差值变化最剧烈的步骤
 
 ## Generated Files
-- `error_analysis_plots.png` - Error analysis visualization plots
-- `error_analysis_report.md` - Detailed analysis report
+- `error_analysis_plots.png` - CFG差值变化可视化图表
+- `error_analysis_report.md` - 详细分析报告
 """
         
         # 保存报告
