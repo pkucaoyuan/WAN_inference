@@ -1362,15 +1362,17 @@ class WanT2V:
         
         # 创建图表 - 只显示CFG差值变化
         fig, ax = plt.subplots(1, 1, figsize=(12, 6))
-        fig.suptitle('相邻两步CFG差值变化分析', fontsize=16, fontweight='bold')
+        fig.suptitle('CFG Difference Change Between Adjacent Steps', fontsize=16, fontweight='bold')
         
         # 绘制相邻两步CFG差值变化（差的差的大小）
         steps_for_changes = steps[1:]  # 从第2步开始
-        ax.plot(steps_for_changes, cfg_diff_changes, 'purple', label='|CFG_diff(t) - CFG_diff(t-1)|', 
+        ax.plot(steps_for_changes, cfg_diff_changes, 'purple', 
+                label='|CFG_diff(t) - CFG_diff(t-1)|', 
                 linewidth=2.5, marker='o', markersize=6)
-        ax.set_xlabel('去噪步骤 (Denoising Step)', fontsize=13)
-        ax.set_ylabel('相邻两步CFG差值的变化量', fontsize=13)
-        ax.set_title('相邻两步的CFG差值变化（条件输出 - 无条件输出）', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Denoising Step', fontsize=13)
+        ax.set_ylabel('Absolute Change in CFG Difference', fontsize=13)
+        ax.set_title('Change in CFG Difference (Conditional - Unconditional) Between Adjacent Steps', 
+                     fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3, linestyle='--')
         ax.legend(loc='best', fontsize=11)
         
