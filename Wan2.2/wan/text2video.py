@@ -1360,28 +1360,44 @@ class WanT2V:
             change = abs(cfg_diffs[i] - cfg_diffs[i-1])
             cfg_diff_changes.append(change)
         
-        # 创建图表 - 只显示CFG差值变化
-        fig, ax = plt.subplots(1, 1, figsize=(12, 6))
-        fig.suptitle('CFG Difference Change Between Adjacent Steps', fontsize=16, fontweight='bold')
+        # 创建图表 - 包含两个子图
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        fig.suptitle('Error Analysis: CFG Difference Change and Absolute Error', fontsize=16, fontweight='bold')
         
-        # 绘制相邻两步CFG差值变化（差的差的大小）
+        # 子图1: 相邻两步CFG差值变化
         steps_for_changes = steps[1:]  # 从第2步开始
-        ax.plot(steps_for_changes, cfg_diff_changes, 'purple', 
+        ax1.plot(steps_for_changes, cfg_diff_changes, 'purple', 
                 label='|CFG_diff(t) - CFG_diff(t-1)|', 
                 linewidth=2.5, marker='o', markersize=6)
-        ax.set_xlabel('Denoising Step', fontsize=13)
-        ax.set_ylabel('Absolute Change in CFG Difference', fontsize=13)
-        ax.set_title('Change in CFG Difference (Conditional - Unconditional) Between Adjacent Steps', 
-                     fontsize=14, fontweight='bold')
-        ax.grid(True, alpha=0.3, linestyle='--')
-        ax.legend(loc='best', fontsize=11)
+        ax1.set_xlabel('Denoising Step', fontsize=12)
+        ax1.set_ylabel('Change Magnitude', fontsize=12)
+        ax1.set_title('CFG Difference Change Between Adjacent Steps', fontsize=13, fontweight='bold')
+        ax1.grid(True, alpha=0.3, linestyle='--')
+        ax1.legend(loc='best', fontsize=10)
         
         # 设置x轴刻度
         if len(steps_for_changes) > 20:
             step_ticks = [i for i in range(min(steps_for_changes), max(steps_for_changes) + 1, 5)]
         else:
             step_ticks = steps_for_changes
-        ax.set_xticks(step_ticks)
+        ax1.set_xticks(step_ticks)
+        
+        # 子图2: 绝对误差（条件输出与无条件输出的差异）
+        ax2.plot(steps, abs_errors, 'b-', 
+                label='Absolute Error: |Cond - Uncond|', 
+                linewidth=2.5, marker='s', markersize=6)
+        ax2.set_xlabel('Denoising Step', fontsize=12)
+        ax2.set_ylabel('Absolute Error', fontsize=12)
+        ax2.set_title('Absolute Error (Conditional vs Unconditional Output)', fontsize=13, fontweight='bold')
+        ax2.grid(True, alpha=0.3, linestyle='--')
+        ax2.legend(loc='best', fontsize=10)
+        
+        # 设置x轴刻度
+        if len(steps) > 20:
+            step_ticks = [i for i in range(min(steps), max(steps) + 1, 5)]
+        else:
+            step_ticks = steps
+        ax2.set_xticks(step_ticks)
         
         plt.tight_layout()
         
