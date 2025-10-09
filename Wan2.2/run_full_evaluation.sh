@@ -14,6 +14,8 @@ SEED_START=${SEED_START:-42}
 NUM_STEPS=${NUM_STEPS:-20}
 GUIDANCE_SCALE=${GUIDANCE_SCALE:-7.5}
 DEVICE=${DEVICE:-"cuda:0"}
+USE_MULTIGPU=${USE_MULTIGPU:-false}  # 是否使用多GPU
+GPU_IDS=${GPU_IDS:-"0 1 2 3"}  # 多GPU时使用的GPU ID
 
 # 目录配置
 DATA_DIR="./mscoco_data"
@@ -30,7 +32,12 @@ echo "  模型路径: ${MODEL_PATH}"
 echo "  样本数量: ${NUM_SAMPLES}"
 echo "  推理步数: ${NUM_STEPS}"
 echo "  引导强度: ${GUIDANCE_SCALE}"
-echo "  设备: ${DEVICE}"
+echo "  使用多GPU: ${USE_MULTIGPU}"
+if [ "${USE_MULTIGPU}" = "true" ]; then
+    echo "  GPU IDs: ${GPU_IDS}"
+else
+    echo "  设备: ${DEVICE}"
+fi
 echo ""
 
 # 步骤1: 下载MS-COCO数据（如果不存在）
@@ -53,15 +60,28 @@ echo "=========================================="
 echo "步骤 2/4: 生成基线图片"
 echo "=========================================="
 GEN_DIR_BASELINE="${OUTPUT_BASE}/generated_baseline"
-python batch_generate_t2i.py \
-    --prompts_csv ${PROMPTS_CSV} \
-    --output_dir ${GEN_DIR_BASELINE} \
-    --model_path ${MODEL_PATH} \
-    --num_samples ${NUM_SAMPLES} \
-    --seed_start ${SEED_START} \
-    --num_inference_steps ${NUM_STEPS} \
-    --guidance_scale ${GUIDANCE_SCALE} \
-    --device ${DEVICE}
+
+if [ "${USE_MULTIGPU}" = "true" ]; then
+    python batch_generate_t2i_multigpu.py \
+        --prompts_csv ${PROMPTS_CSV} \
+        --output_dir ${GEN_DIR_BASELINE} \
+        --model_path ${MODEL_PATH} \
+        --num_samples ${NUM_SAMPLES} \
+        --seed_start ${SEED_START} \
+        --num_inference_steps ${NUM_STEPS} \
+        --guidance_scale ${GUIDANCE_SCALE} \
+        --gpu_ids ${GPU_IDS}
+else
+    python batch_generate_t2i.py \
+        --prompts_csv ${PROMPTS_CSV} \
+        --output_dir ${GEN_DIR_BASELINE} \
+        --model_path ${MODEL_PATH} \
+        --num_samples ${NUM_SAMPLES} \
+        --seed_start ${SEED_START} \
+        --num_inference_steps ${NUM_STEPS} \
+        --guidance_scale ${GUIDANCE_SCALE} \
+        --device ${DEVICE}
+fi
 echo "✅ 基线图片生成完成"
 
 # 步骤3: 生成帧数减半优化图片
@@ -70,16 +90,30 @@ echo "=========================================="
 echo "步骤 3/4: 生成帧数减半优化图片"
 echo "=========================================="
 GEN_DIR_HALF_FRAME="${OUTPUT_BASE}/generated_half_frame"
-python batch_generate_t2i.py \
-    --prompts_csv ${PROMPTS_CSV} \
-    --output_dir ${GEN_DIR_HALF_FRAME} \
-    --model_path ${MODEL_PATH} \
-    --num_samples ${NUM_SAMPLES} \
-    --seed_start ${SEED_START} \
-    --num_inference_steps ${NUM_STEPS} \
-    --guidance_scale ${GUIDANCE_SCALE} \
-    --enable_half_frame \
-    --device ${DEVICE}
+
+if [ "${USE_MULTIGPU}" = "true" ]; then
+    python batch_generate_t2i_multigpu.py \
+        --prompts_csv ${PROMPTS_CSV} \
+        --output_dir ${GEN_DIR_HALF_FRAME} \
+        --model_path ${MODEL_PATH} \
+        --num_samples ${NUM_SAMPLES} \
+        --seed_start ${SEED_START} \
+        --num_inference_steps ${NUM_STEPS} \
+        --guidance_scale ${GUIDANCE_SCALE} \
+        --enable_half_frame \
+        --gpu_ids ${GPU_IDS}
+else
+    python batch_generate_t2i.py \
+        --prompts_csv ${PROMPTS_CSV} \
+        --output_dir ${GEN_DIR_HALF_FRAME} \
+        --model_path ${MODEL_PATH} \
+        --num_samples ${NUM_SAMPLES} \
+        --seed_start ${SEED_START} \
+        --num_inference_steps ${NUM_STEPS} \
+        --guidance_scale ${GUIDANCE_SCALE} \
+        --enable_half_frame \
+        --device ${DEVICE}
+fi
 echo "✅ 帧数减半图片生成完成"
 
 # 步骤4: 评估基线

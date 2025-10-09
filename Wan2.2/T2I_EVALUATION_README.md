@@ -44,6 +44,8 @@ python download_mscoco.py \
 
 ### 3. 批量生成图片
 
+#### **单GPU生成**
+
 ```bash
 # 基础生成（默认配置）
 python batch_generate_t2i.py \
@@ -82,6 +84,43 @@ python batch_generate_t2i.py \
     --cfg_truncation_step 15
 ```
 
+#### **多GPU并行生成（推荐，大幅加速）**
+
+```bash
+# 使用所有可用GPU（自动检测）
+python batch_generate_t2i_multigpu.py \
+    --prompts_csv ./mscoco_data/prompts.csv \
+    --output_dir ./generated_images \
+    --model_path /path/to/your/model \
+    --num_samples 5000
+
+# 指定使用特定的GPU（例如使用GPU 0,1,2,3）
+python batch_generate_t2i_multigpu.py \
+    --prompts_csv ./mscoco_data/prompts.csv \
+    --output_dir ./generated_images \
+    --model_path /path/to/your/model \
+    --num_samples 5000 \
+    --gpu_ids 0 1 2 3
+
+# 使用4张GPU + 帧数减半优化
+python batch_generate_t2i_multigpu.py \
+    --prompts_csv ./mscoco_data/prompts.csv \
+    --output_dir ./generated_images_half_frame \
+    --model_path /path/to/your/model \
+    --num_samples 5000 \
+    --gpu_ids 0 1 2 3 \
+    --enable_half_frame
+
+# 使用8张GPU + CFG截断（大规模评估）
+python batch_generate_t2i_multigpu.py \
+    --prompts_csv ./mscoco_data/prompts.csv \
+    --output_dir ./generated_images_large \
+    --model_path /path/to/your/model \
+    --num_samples 10000 \
+    --gpu_ids 0 1 2 3 4 5 6 7 \
+    --cfg_truncation_step 15
+```
+
 **参数说明：**
 - `--prompts_csv`: MS-COCO prompts CSV文件路径（必需）
 - `--output_dir`: 输出图片目录（必需）
@@ -93,6 +132,13 @@ python batch_generate_t2i.py \
 - `--height/width`: 图片尺寸
 - `--enable_half_frame`: 启用帧数减半优化
 - `--cfg_truncation_step`: CFG截断步数
+- `--gpu_ids`: 使用的GPU ID列表（仅多GPU版本，例如：`--gpu_ids 0 1 2 3`）
+
+**多GPU加速效果：**
+- 4张GPU：约4倍加速
+- 8张GPU：约8倍加速
+- 任务分配：轮询策略，GPU 0处理样本0,4,8...，GPU 1处理样本1,5,9...
+- 种子一致性：每个样本的seed与单GPU版本完全相同，保证结果可复现
 
 ### 4. 计算评估指标
 
@@ -190,6 +236,22 @@ generated_images/                # 生成图片目录
 
 ### Q4: 如何对比不同方法？
 **A**: 使用不同的`--output_dir`生成多组图片，然后分别评估
+
+### Q5: 多GPU生成时如何选择GPU？
+**A**: 使用`--gpu_ids`参数指定，例如：
+```bash
+# 只使用GPU 0和1
+--gpu_ids 0 1
+
+# 使用GPU 2,3,4,5（跳过0,1）
+--gpu_ids 2 3 4 5
+```
+
+### Q6: 多GPU生成的结果和单GPU一致吗？
+**A**: 完全一致！每个样本的seed计算方式相同，保证可复现性
+
+### Q7: 多GPU生成中途中断怎么办？
+**A**: 重新运行相同命令，脚本会自动跳过已生成的图片
 
 ```bash
 # 方法1：基线
