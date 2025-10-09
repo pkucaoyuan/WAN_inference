@@ -1,0 +1,24 @@
+# T2I评估所需的依赖包
+
+# 基础依赖
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+pandas>=2.0.0
+Pillow>=9.5.0
+tqdm>=4.65.0
+requests>=2.31.0
+
+# 评估指标
+pytorch-fid>=0.3.0  # FID计算
+torchmetrics>=1.0.0  # Inception Score
+lpips>=0.1.4  # LPIPS计算
+
+# CLIP Score（需要从GitHub安装）
+# pip install git+https://github.com/openai/CLIP.git
+# 或者使用: pip install clip-by-openai
+
+# 可选：加速计算
+# scipy>=1.10.0
+# scikit-image>=0.21.0
+

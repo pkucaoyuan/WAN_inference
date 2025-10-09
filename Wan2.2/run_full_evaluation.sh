@@ -1,0 +1,140 @@
+#!/bin/bash
+# 完整的T2I评估流程脚本
+
+set -e  # 遇到错误立即退出
+
+echo "=========================================="
+echo "T2I完整评估流程"
+echo "=========================================="
+
+# 配置参数
+MODEL_PATH=${MODEL_PATH:-"/path/to/your/model"}
+NUM_SAMPLES=${NUM_SAMPLES:-1000}
+SEED_START=${SEED_START:-42}
+NUM_STEPS=${NUM_STEPS:-20}
+GUIDANCE_SCALE=${GUIDANCE_SCALE:-7.5}
+DEVICE=${DEVICE:-"cuda:0"}
+
+# 目录配置
+DATA_DIR="./mscoco_data"
+PROMPTS_CSV="${DATA_DIR}/prompts.csv"
+REAL_IMAGES="${DATA_DIR}/images/val2014"
+
+# 输出目录
+OUTPUT_BASE="./evaluation_results"
+mkdir -p ${OUTPUT_BASE}
+
+echo ""
+echo "配置信息:"
+echo "  模型路径: ${MODEL_PATH}"
+echo "  样本数量: ${NUM_SAMPLES}"
+echo "  推理步数: ${NUM_STEPS}"
+echo "  引导强度: ${GUIDANCE_SCALE}"
+echo "  设备: ${DEVICE}"
+echo ""
+
+# 步骤1: 下载MS-COCO数据（如果不存在）
+if [ ! -f "${PROMPTS_CSV}" ]; then
+    echo "=========================================="
+    echo "步骤 1/4: 下载MS-COCO数据"
+    echo "=========================================="
+    python download_mscoco.py \
+        --output_dir ${DATA_DIR} \
+        --num_samples ${NUM_SAMPLES} \
+        --skip_images
+    echo "✅ 数据下载完成"
+else
+    echo "⏭️  跳过数据下载（已存在）"
+fi
+
+# 步骤2: 生成基线图片
+echo ""
+echo "=========================================="
+echo "步骤 2/4: 生成基线图片"
+echo "=========================================="
+GEN_DIR_BASELINE="${OUTPUT_BASE}/generated_baseline"
+python batch_generate_t2i.py \
+    --prompts_csv ${PROMPTS_CSV} \
+    --output_dir ${GEN_DIR_BASELINE} \
+    --model_path ${MODEL_PATH} \
+    --num_samples ${NUM_SAMPLES} \
+    --seed_start ${SEED_START} \
+    --num_inference_steps ${NUM_STEPS} \
+    --guidance_scale ${GUIDANCE_SCALE} \
+    --device ${DEVICE}
+echo "✅ 基线图片生成完成"
+
+# 步骤3: 生成帧数减半优化图片
+echo ""
+echo "=========================================="
+echo "步骤 3/4: 生成帧数减半优化图片"
+echo "=========================================="
+GEN_DIR_HALF_FRAME="${OUTPUT_BASE}/generated_half_frame"
+python batch_generate_t2i.py \
+    --prompts_csv ${PROMPTS_CSV} \
+    --output_dir ${GEN_DIR_HALF_FRAME} \
+    --model_path ${MODEL_PATH} \
+    --num_samples ${NUM_SAMPLES} \
+    --seed_start ${SEED_START} \
+    --num_inference_steps ${NUM_STEPS} \
+    --guidance_scale ${GUIDANCE_SCALE} \
+    --enable_half_frame \
+    --device ${DEVICE}
+echo "✅ 帧数减半图片生成完成"
+
+# 步骤4: 评估基线
+echo ""
+echo "=========================================="
+echo "步骤 4/4: 评估所有方法"
+echo "=========================================="
+
+echo ""
+echo "评估基线方法..."
+python evaluate_t2i.py \
+    --generated_dir ${GEN_DIR_BASELINE} \
+    --real_dir ${REAL_IMAGES} \
+    --prompts_csv ${PROMPTS_CSV} \
+    --metrics fid clip \
+    --output_json ${OUTPUT_BASE}/results_baseline.json \
+    --device ${DEVICE}
+
+echo ""
+echo "评估帧数减半方法..."
+python evaluate_t2i.py \
+    --generated_dir ${GEN_DIR_HALF_FRAME} \
+    --real_dir ${REAL_IMAGES} \
+    --prompts_csv ${PROMPTS_CSV} \
+    --metrics fid clip \
+    --output_json ${OUTPUT_BASE}/results_half_frame.json \
+    --device ${DEVICE}
+
+# 输出对比结果
+echo ""
+echo "=========================================="
+echo "✅ 评估完成！"
+echo "=========================================="
+echo ""
+echo "结果文件:"
+echo "  基线: ${OUTPUT_BASE}/results_baseline.json"
+echo "  帧数减半: ${OUTPUT_BASE}/results_half_frame.json"
+echo ""
+echo "生成图片:"
+echo "  基线: ${GEN_DIR_BASELINE}"
+echo "  帧数减半: ${GEN_DIR_HALF_FRAME}"
+echo ""
+
+# 简单对比（如果安装了jq）
+if command -v jq &> /dev/null; then
+    echo "快速对比:"
+    echo "----------------------------------------"
+    echo "基线方法:"
+    jq '.metrics' ${OUTPUT_BASE}/results_baseline.json
+    echo ""
+    echo "帧数减半方法:"
+    jq '.metrics' ${OUTPUT_BASE}/results_half_frame.json
+    echo "----------------------------------------"
+fi
+
+echo ""
+echo "🎉 全部完成！"
+
