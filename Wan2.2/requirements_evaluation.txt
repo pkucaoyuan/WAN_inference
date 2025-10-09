@@ -8,6 +8,7 @@ pandas>=2.0.0
 Pillow>=9.5.0
 tqdm>=4.65.0
 requests>=2.31.0
+matplotlib>=3.7.0
 
 # 评估指标
 pytorch-fid>=0.3.0  # FID计算
