@@ -57,7 +57,7 @@ fi
 # 步骤2: 生成基线图片
 echo ""
 echo "=========================================="
-echo "步骤 2/4: 生成基线图片"
+echo "步骤 2/3: 生成基线图片"
 echo "=========================================="
 GEN_DIR_BASELINE="${OUTPUT_BASE}/generated_baseline"
 
@@ -84,42 +84,10 @@ else
 fi
 echo "✅ 基线图片生成完成"
 
-# 步骤3: 生成帧数减半优化图片
+# 步骤3: 评估基线方法
 echo ""
 echo "=========================================="
-echo "步骤 3/4: 生成帧数减半优化图片"
-echo "=========================================="
-GEN_DIR_HALF_FRAME="${OUTPUT_BASE}/generated_half_frame"
-
-if [ "${USE_MULTIGPU}" = "true" ]; then
-    python batch_generate_t2i_multigpu.py \
-        --prompts_csv ${PROMPTS_CSV} \
-        --output_dir ${GEN_DIR_HALF_FRAME} \
-        --model_path ${MODEL_PATH} \
-        --num_samples ${NUM_SAMPLES} \
-        --seed_start ${SEED_START} \
-        --num_inference_steps ${NUM_STEPS} \
-        --guidance_scale ${GUIDANCE_SCALE} \
-        --enable_half_frame \
-        --gpu_ids ${GPU_IDS}
-else
-    python batch_generate_t2i.py \
-        --prompts_csv ${PROMPTS_CSV} \
-        --output_dir ${GEN_DIR_HALF_FRAME} \
-        --model_path ${MODEL_PATH} \
-        --num_samples ${NUM_SAMPLES} \
-        --seed_start ${SEED_START} \
-        --num_inference_steps ${NUM_STEPS} \
-        --guidance_scale ${GUIDANCE_SCALE} \
-        --enable_half_frame \
-        --device ${DEVICE}
-fi
-echo "✅ 帧数减半图片生成完成"
-
-# 步骤4: 评估基线
-echo ""
-echo "=========================================="
-echo "步骤 4/4: 评估所有方法"
+echo "步骤 3/3: 评估基线方法"
 echo "=========================================="
 
 echo ""
@@ -132,40 +100,24 @@ python evaluate_t2i.py \
     --output_json ${OUTPUT_BASE}/results_baseline.json \
     --device ${DEVICE}
 
-echo ""
-echo "评估帧数减半方法..."
-python evaluate_t2i.py \
-    --generated_dir ${GEN_DIR_HALF_FRAME} \
-    --real_dir ${REAL_IMAGES} \
-    --prompts_csv ${PROMPTS_CSV} \
-    --metrics fid clip \
-    --output_json ${OUTPUT_BASE}/results_half_frame.json \
-    --device ${DEVICE}
-
-# 输出对比结果
+# 输出结果
 echo ""
 echo "=========================================="
 echo "✅ 评估完成！"
 echo "=========================================="
 echo ""
 echo "结果文件:"
-echo "  基线: ${OUTPUT_BASE}/results_baseline.json"
-echo "  帧数减半: ${OUTPUT_BASE}/results_half_frame.json"
+echo "  ${OUTPUT_BASE}/results_baseline.json"
 echo ""
 echo "生成图片:"
-echo "  基线: ${GEN_DIR_BASELINE}"
-echo "  帧数减半: ${GEN_DIR_HALF_FRAME}"
+echo "  ${GEN_DIR_BASELINE}"
 echo ""
 
-# 简单对比（如果安装了jq）
+# 显示结果（如果安装了jq）
 if command -v jq &> /dev/null; then
-    echo "快速对比:"
+    echo "评估结果:"
     echo "----------------------------------------"
-    echo "基线方法:"
     jq '.metrics' ${OUTPUT_BASE}/results_baseline.json
-    echo ""
-    echo "帧数减半方法:"
-    jq '.metrics' ${OUTPUT_BASE}/results_half_frame.json
     echo "----------------------------------------"
 fi
 
