@@ -79,18 +79,31 @@ def worker_generate(
     print(f"[GPU {rank}] 🔧 加载模型...")
     
     try:
-        from wan.text2video import WanT2V
+        import wan
+        from omegaconf import OmegaConf
+        
+        # 加载配置
+        config_path = os.path.join(model_path, "config.yaml")
+        if not os.path.exists(config_path):
+            # 尝试默认配置路径
+            config_path = "Wan2.2/configs/t2v_A14B.yaml"
+        
+        cfg = OmegaConf.load(config_path)
         
         # 初始化模型
-        wan_t2v = WanT2V(
-            model_path=model_path,
-            device=device,
-            dtype=torch.bfloat16 if dtype == "bf16" else torch.float16
+        wan_t2v = wan.WanT2V(
+            config=cfg,
+            checkpoint_dir=model_path,
+            device_id=rank,
+            rank=rank,
+            t5_fsdp=False
         )
         
         print(f"[GPU {rank}] ✅ 模型加载完成")
     except Exception as e:
         print(f"[GPU {rank}] ❌ 模型加载失败: {e}")
+        import traceback
+        traceback.print_exc()
         return
     
     # 批量生成
@@ -201,7 +214,7 @@ def batch_generate_t2i_multigpu(
         width: 图片宽度
         enable_half_frame: 是否启用帧数减半优化
         cfg_truncation_step: CFG截断步数
-        model_path: 模型路径
+        model_path: 模型checkpoint目录路径（包含权重和config.yaml）
         negative_prompt: 负面提示词
         dtype: 数据类型
         gpu_ids: GPU ID列表（例如[0,1,2,3]）
@@ -304,8 +317,8 @@ def main():
                         help="生成样本数量（默认全部）")
     
     # 模型配置
-    parser.add_argument("--model_path", type=str, default=None,
-                        help="模型路径")
+    parser.add_argument("--model_path", type=str, required=True,
+                        help="模型checkpoint目录路径（包含权重和config.yaml）")
     parser.add_argument("--gpu_ids", type=int, nargs='+', default=None,
                         help="使用的GPU ID列表，例如: --gpu_ids 0 1 2 3 (默认使用所有可用GPU)")
     parser.add_argument("--dtype", type=str, default="bf16", choices=["bf16", "fp16"],

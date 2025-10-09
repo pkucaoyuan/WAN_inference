@@ -106,22 +106,37 @@ def batch_generate_t2i(
     
     args = Args()
     
-    # 加载模型（这里需要根据你的generate.py实际实现调整）
+    # 加载模型
     try:
-        from wan.text2video import WanT2V
-        from diffusers import FlowUniPCMultistepScheduler
+        import wan
+        from omegaconf import OmegaConf
+        
+        # 加载配置
+        config_path = os.path.join(model_path, "config.yaml")
+        if not os.path.exists(config_path):
+            # 尝试默认配置路径
+            config_path = "Wan2.2/configs/t2v_A14B.yaml"
+        
+        cfg = OmegaConf.load(config_path)
+        
+        # 提取device编号
+        device_id = int(device.split(':')[1]) if ':' in device else 0
         
         # 初始化模型
-        wan_t2v = WanT2V(
-            model_path=args.model_path,
-            device=args.device,
-            dtype=torch.bfloat16 if args.dtype == "bf16" else torch.float16
+        wan_t2v = wan.WanT2V(
+            config=cfg,
+            checkpoint_dir=model_path,
+            device_id=device_id,
+            rank=device_id,
+            t5_fsdp=False
         )
         
         print(f"✅ 模型加载完成")
     except Exception as e:
         print(f"❌ 模型加载失败: {e}")
         print("请确保模型路径正确，并且已安装所有依赖")
+        import traceback
+        traceback.print_exc()
         return
     
     # 批量生成
@@ -213,8 +228,8 @@ def main():
                         help="生成样本数量（默认全部）")
     
     # 模型配置
-    parser.add_argument("--model_path", type=str, default=None,
-                        help="模型路径")
+    parser.add_argument("--model_path", type=str, required=True,
+                        help="模型checkpoint目录路径（包含权重和config.yaml）")
     parser.add_argument("--device", type=str, default="cuda:0",
                         help="设备")
     
