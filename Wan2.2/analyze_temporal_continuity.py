@@ -140,7 +140,9 @@ def analyze_temporal_continuity_single_video(
     print("Loading model...")
     config_path = os.path.join(model_path, "config.yaml")
     if not os.path.exists(config_path):
-        config_path = "Wan2.2/configs/t2v_A14B.yaml"
+        # 脚本在Wan2.2/目录下，向上找配置文件
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(script_dir, "configs/t2v_A14B.yaml")
     
     cfg = OmegaConf.load(config_path)
     device_id = int(device.split(':')[1]) if ':' in device else 0
