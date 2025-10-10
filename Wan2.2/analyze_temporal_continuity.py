@@ -179,14 +179,16 @@ def analyze_temporal_continuity_single_video(
     # 这里我们假设已经修改，或者使用调试模式
     
     video, timing_info = wan_t2v.generate(
-        prompt=prompt,
-        negative_prompt="",
-        height=480,
-        width=832,
-        num_frames=num_frames,
-        num_inference_steps=num_inference_steps,
-        guidance_scale=guidance_scale,
+        input_prompt=prompt,
+        size=(832, 480),
+        frame_num=num_frames,
+        shift=12.0,
+        sample_solver='unipc',
+        sampling_steps=num_inference_steps,
+        guide_scale=guidance_scale,
+        n_prompt="",
         seed=seed,
+        offload_model=True,
         enable_half_frame_generation=enable_half_frame,
         enable_debug=True,  # 启用调试模式以获取中间结果
         debug_output_dir=output_dir
