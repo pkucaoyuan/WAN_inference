@@ -189,6 +189,11 @@ def analyze_temporal_continuity_single_video(
         debug_output_dir=output_dir
     )
     
+    print(f"\n📋 分析说明:")
+    print(f"   将分析每步传递的实际latent (x_t)")
+    print(f"   而不是中间的x0预测")
+    print(f"   x_t是真正影响下一步的量")
+    
     print("\n✅ Video generation completed.")
     
     # 读取并分析保存的latent
@@ -235,7 +240,9 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
     print(f"   使用空间: {'x0' if use_x0_space else 'epsilon'}")
     
     # 检查latent的维度顺序
-    test_latent = first_data['x0_pred'] if use_x0_space else first_data['eps_pred']
+    test_latent = first_data['x_t']  # 使用x_t而不是x0_pred
+    print(f"   x_t shape: {first_data['x_t'].shape}")
+    print(f"   分析对象: x_t (实际传递的噪声latent)")
     print(f"   测试latent shape: {test_latent.shape}")
     print(f"   测试latent维度: {test_latent.dim()}")
     if test_latent.dim() == 5:
@@ -250,7 +257,8 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
         data = torch.load(latent_path)
         
         step = data['step']
-        latent = data['x0_pred'] if use_x0_space else data['eps_pred']
+        # 使用x_t（实际传递的latent），而不是x0_pred（中间估计）
+        latent = data['x_t']
         
         # 处理维度：WAN格式是 [B, C, F, H, W] 或 [C, F, H, W]
         if latent.dim() == 5:
@@ -343,7 +351,7 @@ def plot_continuity_metrics(
         output_dir: 输出目录
         use_x0_space: 是否使用x0空间
     """
-    space_name = "x̂₀" if use_x0_space else "ε"
+    space_name = "x_t (Noisy Latent)"
     
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
@@ -351,7 +359,7 @@ def plot_continuity_metrics(
     ax1.plot(steps, mse_distances, 'b-o', linewidth=2.5, markersize=6, label=f'MSE Distance')
     ax1.set_xlabel('Denoising Step', fontsize=13)
     ax1.set_ylabel('MSE', fontsize=13)
-    ax1.set_title(f'Temporal Continuity: MSE Between Adjacent Frames in {space_name} Space', 
+    ax1.set_title(f'Temporal Continuity: MSE Between Adjacent Frames in {space_name}', 
                   fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3, linestyle='--')
     ax1.legend(loc='best', fontsize=11)
@@ -365,11 +373,11 @@ def plot_continuity_metrics(
     ax2.plot(steps, cosine_sims, 'r-s', linewidth=2.5, markersize=6, label=f'Cosine Similarity')
     ax2.set_xlabel('Denoising Step', fontsize=13)
     ax2.set_ylabel('Similarity', fontsize=13)
-    ax2.set_title(f'Temporal Continuity: Cosine Similarity in {space_name} Space', 
+    ax2.set_title(f'Temporal Continuity: Cosine Similarity in {space_name}', 
                   fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3, linestyle='--')
     ax2.legend(loc='best', fontsize=11)
-    ax2.set_ylim([0, 1.05])
+    ax2.set_ylim([-0.1, 1.05])  # 允许负值，因为早期可能是负相关
     
     # 添加说明文字
     ax2.text(0.02, 0.02, 'Higher = More Similar', 
@@ -379,14 +387,14 @@ def plot_continuity_metrics(
     plt.tight_layout()
     
     # 保存图表
-    output_path = os.path.join(output_dir, f"temporal_continuity_{space_name.replace('̂', 'hat')}.png")
+    output_path = os.path.join(output_dir, "temporal_continuity_x_t.png")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
     
     print(f"\n✅ Continuity plot saved to: {output_path}")
     
     # 保存数据
-    data_path = os.path.join(output_dir, f"temporal_continuity_data_{space_name.replace('̂', 'hat')}.npz")
+    data_path = os.path.join(output_dir, "temporal_continuity_data_x_t.npz")
     np.savez(data_path, 
              steps=steps, 
              mse_distances=mse_distances, 
@@ -395,7 +403,7 @@ def plot_continuity_metrics(
     
     # 打印统计信息
     print(f"\n{'='*60}")
-    print(f"Temporal Continuity Statistics ({space_name} space)")
+    print(f"Temporal Continuity Statistics (x_t - Noisy Latent)")
     print(f"{'='*60}")
     print(f"MSE Between Adjacent Frames:")
     print(f"  Mean: {np.mean(mse_distances):.6f}")
@@ -407,6 +415,10 @@ def plot_continuity_metrics(
     print(f"  Std:  {np.std(cosine_sims):.6f}")
     print(f"  Min:  {np.min(cosine_sims):.6f} (step {steps[np.argmin(cosine_sims)]})")
     print(f"  Max:  {np.max(cosine_sims):.6f} (step {steps[np.argmax(cosine_sims)]})")
+    print(f"\n📋 说明:")
+    print(f"  - 分析的是每步实际传递的噪声latent (x_t)")
+    print(f"  - x_t是真正影响下一步计算的量")
+    print(f"  - 预期趋势: MSE从高到低, 余弦相似度从低到高")
     print(f"{'='*60}\n")
 
 
