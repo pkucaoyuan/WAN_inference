@@ -1321,14 +1321,11 @@ class WanT2V:
             
             noise_pred_uncond = model(latent_model_input, timestep, **model_kwargs_uncond)[0]
             
-            # 计算误差
-            absolute_error = torch.abs(current_output - noise_pred_uncond)
-            relative_error = absolute_error / (torch.abs(current_output) + 1e-8)
-            
             # 计算CFG差值（条件输出 - 无条件输出）
             cfg_diff = current_output - noise_pred_uncond
-            cfg_diff_mean = cfg_diff.mean().item()
-            cfg_diff_std = cfg_diff.std().item()
+            
+            # 计算MSE（均方误差）
+            mse = torch.mean(cfg_diff ** 2).item()
             
             # 保存完整的CFG差值张量用于计算相邻步骤的张量级差异
             cfg_diff_tensor = cfg_diff.detach().cpu()  # 移到CPU节省GPU内存
@@ -1337,23 +1334,20 @@ class WanT2V:
             error_data = {
                 'step': step_idx + 1,
                 'timestep': timestep.item(),
-                'absolute_error_mean': absolute_error.mean().item(),
-                'absolute_error_std': absolute_error.std().item(),
-                'relative_error_mean': relative_error.mean().item(),
-                'relative_error_std': relative_error.std().item(),
+                'mse': mse,  # MSE: mean((cond - uncond)²)
+                'cfg_diff_mean': cfg_diff.mean().item(),
+                'cfg_diff_std': cfg_diff.std().item(),
                 'conditional_output_mean': current_output.mean().item(),
                 'conditional_output_std': current_output.std().item(),
                 'unconditional_output_mean': noise_pred_uncond.mean().item(),
                 'unconditional_output_std': noise_pred_uncond.std().item(),
-                'cfg_diff_mean': cfg_diff_mean,
-                'cfg_diff_std': cfg_diff_std,
                 'cfg_diff_tensor': cfg_diff_tensor,  # 保存完整张量
             }
             
             self.error_history.append(error_data)
             
             if self.rank == 0:
-                print(f"📊 Step {step_idx+1}: 绝对误差={error_data['absolute_error_mean']:.4f}, 相对误差={error_data['relative_error_mean']:.4f}")
+                print(f"📊 Step {step_idx+1}: MSE={error_data['mse']:.6f}, CFG_diff_mean={error_data['cfg_diff_mean']:.4f}")
         
         return current_output
 
@@ -1374,38 +1368,35 @@ class WanT2V:
         # 提取数据
         steps = [data['step'] for data in self.error_history]
         timesteps = [data['timestep'] for data in self.error_history]
-        abs_errors = [data['absolute_error_mean'] for data in self.error_history]
-        rel_errors = [data['relative_error_mean'] for data in self.error_history]
-        cond_means = [data['conditional_output_mean'] for data in self.error_history]
-        uncond_means = [data['unconditional_output_mean'] for data in self.error_history]
+        mse_values = [data['mse'] for data in self.error_history]
         cfg_diffs = [data['cfg_diff_mean'] for data in self.error_history]
         
-        # 计算相邻两步的CFG差值变化（张量级别直接做差）
+        # 计算相邻两步的CFG差值变化（张量级别MSE）
         cfg_diff_changes = []
         for i in range(1, len(self.error_history)):
             # 获取相邻两步的完整CFG差值张量
             cfg_tensor_t = self.error_history[i]['cfg_diff_tensor']  # 当前步
             cfg_tensor_t_minus_1 = self.error_history[i-1]['cfg_diff_tensor']  # 前一步
             
-            # 张量级别直接做差，然后计算范数
+            # 张量级别直接做差，然后计算MSE
             tensor_diff = cfg_tensor_t - cfg_tensor_t_minus_1
             
-            # 计算L2范数作为变化量
-            change = torch.norm(tensor_diff, p=2).item()
-            cfg_diff_changes.append(change)
+            # 计算MSE作为变化量
+            change_mse = torch.mean(tensor_diff ** 2).item()
+            cfg_diff_changes.append(change_mse)
         
         # 创建图表 - 包含两个子图
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-        fig.suptitle('Error Analysis: CFG Difference Change and Absolute Error', fontsize=16, fontweight='bold')
+        fig.suptitle('Error Analysis: CFG Difference Change (MSE) and MSE per Step', fontsize=16, fontweight='bold')
         
-        # 子图1: 相邻两步CFG差值变化（张量级L2范数）
+        # 子图1: 相邻两步CFG差值变化（张量级MSE）
         steps_for_changes = steps[1:]  # 从第2步开始
         ax1.plot(steps_for_changes, cfg_diff_changes, 'purple', 
-                label='||CFG_diff(t) - CFG_diff(t-1)||₂', 
+                label='MSE(CFG_diff(t) - CFG_diff(t-1))', 
                 linewidth=2.5, marker='o', markersize=6)
         ax1.set_xlabel('Denoising Step', fontsize=12)
-        ax1.set_ylabel('L2 Norm', fontsize=12)
-        ax1.set_title('CFG Difference Change (Tensor-level L2 Norm)', fontsize=13, fontweight='bold')
+        ax1.set_ylabel('MSE', fontsize=12)
+        ax1.set_title('CFG Difference Change Between Adjacent Steps (MSE)', fontsize=13, fontweight='bold')
         ax1.grid(True, alpha=0.3, linestyle='--')
         ax1.legend(loc='best', fontsize=10)
         
@@ -1416,13 +1407,13 @@ class WanT2V:
             step_ticks = steps_for_changes
         ax1.set_xticks(step_ticks)
         
-        # 子图2: 绝对误差（条件输出与无条件输出的差异）
-        ax2.plot(steps, abs_errors, 'b-', 
-                label='Absolute Error: |Cond - Uncond|', 
+        # 子图2: 每步的MSE
+        ax2.plot(steps, mse_values, 'b-', 
+                label='MSE(Cond - Uncond)', 
                 linewidth=2.5, marker='s', markersize=6)
         ax2.set_xlabel('Denoising Step', fontsize=12)
-        ax2.set_ylabel('Absolute Error', fontsize=12)
-        ax2.set_title('Absolute Error (Conditional vs Unconditional Output)', fontsize=13, fontweight='bold')
+        ax2.set_ylabel('MSE', fontsize=12)
+        ax2.set_title('MSE Between Conditional and Unconditional Outputs', fontsize=13, fontweight='bold')
         ax2.grid(True, alpha=0.3, linestyle='--')
         ax2.legend(loc='best', fontsize=10)
         
@@ -1458,18 +1449,17 @@ class WanT2V:
         from datetime import datetime
         
         # 计算统计信息
-        abs_errors = [data['absolute_error_mean'] for data in self.error_history]
-        rel_errors = [data['relative_error_mean'] for data in self.error_history]
+        mse_values = [data['mse'] for data in self.error_history]
         cfg_diffs = [data['cfg_diff_mean'] for data in self.error_history]
         
-        # 计算相邻两步的CFG差值变化（张量级别L2范数）
+        # 计算相邻两步的CFG差值变化（张量级别MSE）
         cfg_diff_changes = []
         for i in range(1, len(self.error_history)):
             cfg_tensor_t = self.error_history[i]['cfg_diff_tensor']
             cfg_tensor_t_minus_1 = self.error_history[i-1]['cfg_diff_tensor']
             tensor_diff = cfg_tensor_t - cfg_tensor_t_minus_1
-            change = torch.norm(tensor_diff, p=2).item()
-            cfg_diff_changes.append(change)
+            change_mse = torch.mean(tensor_diff ** 2).item()
+            cfg_diff_changes.append(change_mse)
         
         report = f"""# Error Analysis Report
 
@@ -1479,32 +1469,41 @@ class WanT2V:
 - **Analysis Time**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ## Statistical Summary
-### CFG差值相邻两步变化 (Tensor-level L2 Norm)
+### CFG差值相邻两步变化 (Tensor-level MSE)
 - **Mean**: {np.mean(cfg_diff_changes):.6f}
 - **Std Dev**: {np.std(cfg_diff_changes):.6f}
 - **Max**: {np.max(cfg_diff_changes):.6f}
 - **Min**: {np.min(cfg_diff_changes):.6f}
-- **Metric**: ||CFG_diff(t) - CFG_diff(t-1)||₂
+- **Metric**: MSE(CFG_diff(t) - CFG_diff(t-1))
 
-### CFG差值 (条件输出 - 无条件输出)
+### 每步的MSE (条件输出 vs 无条件输出)
+- **Mean**: {np.mean(mse_values):.6f}
+- **Std Dev**: {np.std(mse_values):.6f}
+- **Max**: {np.max(mse_values):.6f}
+- **Min**: {np.min(mse_values):.6f}
+
+### CFG差值均值 (条件输出 - 无条件输出)
 - **Mean**: {np.mean(cfg_diffs):.6f}
 - **Std Dev**: {np.std(cfg_diffs):.6f}
 - **Max**: {np.max(cfg_diffs):.6f}
 - **Min**: {np.min(cfg_diffs):.6f}
 
 ## Detailed Data
-| Step | Timestep | CFG Diff Mean | CFG Diff Change |
-|------|----------|---------------|-----------------|
+| Step | Timestep | MSE | CFG Diff Mean | CFG Diff Change (MSE) |
+|------|----------|-----|---------------|-----------------------|
 """
         
         for i, data in enumerate(self.error_history):
             cfg_change = cfg_diff_changes[i-1] if i > 0 else 0.0
-            report += f"| {data['step']} | {data['timestep']:.1f} | {data['cfg_diff_mean']:.6f} | {cfg_change:.6f} |\n"
+            report += f"| {data['step']} | {data['timestep']:.1f} | {data['mse']:.6f} | {data['cfg_diff_mean']:.6f} | {cfg_change:.6f} |\n"
         
         report += f"""
 ## Analysis Conclusions
-1. **CFG差值趋势**: 条件输出与无条件输出的差值在去噪过程中的变化
-2. **相邻步骤变化**: 使用张量级L2范数计算 ||CFG_diff(t) - CFG_diff(t-1)||₂
+1. **每步MSE**: 条件输出与无条件输出的均方误差
+   - MSE = mean((cond - uncond)²)
+   - 反映每步CFG引导的强度
+2. **相邻步骤变化**: 使用张量级MSE计算
+   - Change_MSE = mean((CFG_diff(t) - CFG_diff(t-1))²)
    - 直接对完整张量做差，不先取均值
    - 更准确地反映整体变化
    - 保留空间和通道维度的信息
@@ -1512,8 +1511,9 @@ class WanT2V:
 
 ## Methodology
 - **CFG Difference**: cfg_diff = noise_pred_cond - noise_pred_uncond (tensor)
-- **Temporal Change**: ||cfg_diff(t) - cfg_diff(t-1)||₂ (L2 norm of tensor difference)
-- **Advantage**: Preserves spatial and channel information before aggregation
+- **MSE per Step**: MSE = mean(cfg_diff²)
+- **Temporal Change**: MSE(cfg_diff(t) - cfg_diff(t-1))
+- **Advantage**: MSE provides consistent scale across all measurements
 
 ## Generated Files
 - `error_analysis_plots.png` - CFG差值变化可视化图表
