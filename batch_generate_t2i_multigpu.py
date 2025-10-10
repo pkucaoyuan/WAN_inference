@@ -12,8 +12,10 @@ from pathlib import Path
 from tqdm import tqdm
 import time
 
-# 添加项目路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 添加项目路径 - Wan2.2子目录
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(script_dir, 'Wan2.2'))
+sys.path.insert(0, script_dir)
 
 
 def worker_generate(
@@ -86,7 +88,8 @@ def worker_generate(
         config_path = os.path.join(model_path, "config.yaml")
         if not os.path.exists(config_path):
             # 尝试默认配置路径
-            config_path = "Wan2.2/configs/t2v_A14B.yaml"
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            config_path = os.path.join(script_dir, "Wan2.2/configs/t2v_A14B.yaml")
         
         cfg = OmegaConf.load(config_path)
         
