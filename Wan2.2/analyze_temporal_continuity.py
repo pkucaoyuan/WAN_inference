@@ -316,10 +316,10 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
         normalized_l2_distances.append(avg_mse)  # 复用变量名，实际存MSE
         cosine_similarities.append(avg_cos)
     
-    # 绘图
+    # 绘图（注意：normalized_l2_distances变量实际存储的是mse_distances）
     plot_continuity_metrics(
         step_indices,
-        normalized_l2_distances,
+        normalized_l2_distances,  # 实际是mse_distances
         cosine_similarities,
         output_dir,
         use_x0_space
@@ -389,7 +389,7 @@ def plot_continuity_metrics(
     data_path = os.path.join(output_dir, f"temporal_continuity_data_{space_name.replace('̂', 'hat')}.npz")
     np.savez(data_path, 
              steps=steps, 
-             l2_distances=l2_distances, 
+             mse_distances=mse_distances, 
              cosine_similarities=cosine_sims)
     print(f"✅ Data saved to: {data_path}")
     
@@ -420,12 +420,12 @@ def create_demo_plot():
     # 模拟数据：早期步骤相邻帧差异大，后期趋于稳定
     steps = list(range(1, 21))
     
-    # 归一化L2距离：早期高（不连续），后期低（连续）
-    l2_distances = [
-        0.45, 0.42, 0.38, 0.35, 0.30, 
-        0.25, 0.22, 0.18, 0.15, 0.12,
-        0.10, 0.08, 0.07, 0.06, 0.05,
-        0.04, 0.04, 0.03, 0.03, 0.03
+    # MSE距离：早期高（不连续），后期低（连续）
+    mse_distances = [
+        0.25, 0.20, 0.17, 0.14, 0.11,
+        0.08, 0.06, 0.04, 0.03, 0.02,
+        0.012, 0.008, 0.005, 0.004, 0.003,
+        0.002, 0.001, 0.001, 0.0005, 0.0005
     ]
     
     # 余弦相似度：早期低，后期高（趋近1）
@@ -439,12 +439,12 @@ def create_demo_plot():
     output_dir = "./demo_continuity_analysis"
     os.makedirs(output_dir, exist_ok=True)
     
-    plot_continuity_metrics(steps, l2_distances, cosine_sims, output_dir, use_x0_space=True)
+    plot_continuity_metrics(steps, mse_distances, cosine_sims, output_dir, use_x0_space=True)
     
     print(f"\n✅ Demo plot created in: {output_dir}")
     print("This demonstrates the expected pattern:")
-    print("  - Early steps: High L2 distance, low cosine similarity (frames differ)")
-    print("  - Later steps: Low L2 distance, high cosine similarity (frames converge)")
+    print("  - Early steps: High MSE, low cosine similarity (frames differ)")
+    print("  - Later steps: Low MSE, high cosine similarity (frames converge)")
 
 
 def main():
