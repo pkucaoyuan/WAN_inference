@@ -1308,6 +1308,9 @@ class WanT2V:
             cfg_diff_mean = cfg_diff.mean().item()
             cfg_diff_std = cfg_diff.std().item()
             
+            # 保存完整的CFG差值张量用于计算相邻步骤的张量级差异
+            cfg_diff_tensor = cfg_diff.detach().cpu()  # 移到CPU节省GPU内存
+            
             # 记录误差数据
             error_data = {
                 'step': step_idx + 1,
@@ -1322,6 +1325,7 @@ class WanT2V:
                 'unconditional_output_std': noise_pred_uncond.std().item(),
                 'cfg_diff_mean': cfg_diff_mean,
                 'cfg_diff_std': cfg_diff_std,
+                'cfg_diff_tensor': cfg_diff_tensor,  # 保存完整张量
             }
             
             self.error_history.append(error_data)
@@ -1354,24 +1358,32 @@ class WanT2V:
         uncond_means = [data['unconditional_output_mean'] for data in self.error_history]
         cfg_diffs = [data['cfg_diff_mean'] for data in self.error_history]
         
-        # 计算相邻两步的CFG差值变化（差的差）
+        # 计算相邻两步的CFG差值变化（张量级别直接做差）
         cfg_diff_changes = []
-        for i in range(1, len(cfg_diffs)):
-            change = abs(cfg_diffs[i] - cfg_diffs[i-1])
+        for i in range(1, len(self.error_history)):
+            # 获取相邻两步的完整CFG差值张量
+            cfg_tensor_t = self.error_history[i]['cfg_diff_tensor']  # 当前步
+            cfg_tensor_t_minus_1 = self.error_history[i-1]['cfg_diff_tensor']  # 前一步
+            
+            # 张量级别直接做差，然后计算范数
+            tensor_diff = cfg_tensor_t - cfg_tensor_t_minus_1
+            
+            # 计算L2范数作为变化量
+            change = torch.norm(tensor_diff, p=2).item()
             cfg_diff_changes.append(change)
         
         # 创建图表 - 包含两个子图
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
         fig.suptitle('Error Analysis: CFG Difference Change and Absolute Error', fontsize=16, fontweight='bold')
         
-        # 子图1: 相邻两步CFG差值变化
+        # 子图1: 相邻两步CFG差值变化（张量级L2范数）
         steps_for_changes = steps[1:]  # 从第2步开始
         ax1.plot(steps_for_changes, cfg_diff_changes, 'purple', 
-                label='|CFG_diff(t) - CFG_diff(t-1)|', 
+                label='||CFG_diff(t) - CFG_diff(t-1)||₂', 
                 linewidth=2.5, marker='o', markersize=6)
         ax1.set_xlabel('Denoising Step', fontsize=12)
-        ax1.set_ylabel('Change Magnitude', fontsize=12)
-        ax1.set_title('CFG Difference Change Between Adjacent Steps', fontsize=13, fontweight='bold')
+        ax1.set_ylabel('L2 Norm', fontsize=12)
+        ax1.set_title('CFG Difference Change (Tensor-level L2 Norm)', fontsize=13, fontweight='bold')
         ax1.grid(True, alpha=0.3, linestyle='--')
         ax1.legend(loc='best', fontsize=10)
         
@@ -1428,10 +1440,13 @@ class WanT2V:
         rel_errors = [data['relative_error_mean'] for data in self.error_history]
         cfg_diffs = [data['cfg_diff_mean'] for data in self.error_history]
         
-        # 计算相邻两步的CFG差值变化
+        # 计算相邻两步的CFG差值变化（张量级别L2范数）
         cfg_diff_changes = []
-        for i in range(1, len(cfg_diffs)):
-            change = abs(cfg_diffs[i] - cfg_diffs[i-1])
+        for i in range(1, len(self.error_history)):
+            cfg_tensor_t = self.error_history[i]['cfg_diff_tensor']
+            cfg_tensor_t_minus_1 = self.error_history[i-1]['cfg_diff_tensor']
+            tensor_diff = cfg_tensor_t - cfg_tensor_t_minus_1
+            change = torch.norm(tensor_diff, p=2).item()
             cfg_diff_changes.append(change)
         
         report = f"""# Error Analysis Report
@@ -1442,11 +1457,12 @@ class WanT2V:
 - **Analysis Time**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ## Statistical Summary
-### CFG差值相邻两步变化
+### CFG差值相邻两步变化 (Tensor-level L2 Norm)
 - **Mean**: {np.mean(cfg_diff_changes):.6f}
 - **Std Dev**: {np.std(cfg_diff_changes):.6f}
 - **Max**: {np.max(cfg_diff_changes):.6f}
 - **Min**: {np.min(cfg_diff_changes):.6f}
+- **Metric**: ||CFG_diff(t) - CFG_diff(t-1)||₂
 
 ### CFG差值 (条件输出 - 无条件输出)
 - **Mean**: {np.mean(cfg_diffs):.6f}
@@ -1466,8 +1482,16 @@ class WanT2V:
         report += f"""
 ## Analysis Conclusions
 1. **CFG差值趋势**: 条件输出与无条件输出的差值在去噪过程中的变化
-2. **相邻步骤变化**: 相邻两步CFG差值的变化量，反映CFG引导的平滑程度
+2. **相邻步骤变化**: 使用张量级L2范数计算 ||CFG_diff(t) - CFG_diff(t-1)||₂
+   - 直接对完整张量做差，不先取均值
+   - 更准确地反映整体变化
+   - 保留空间和通道维度的信息
 3. **变化剧烈点**: 识别CFG差值变化最剧烈的步骤
+
+## Methodology
+- **CFG Difference**: cfg_diff = noise_pred_cond - noise_pred_uncond (tensor)
+- **Temporal Change**: ||cfg_diff(t) - cfg_diff(t-1)||₂ (L2 norm of tensor difference)
+- **Advantage**: Preserves spatial and channel information before aggregation
 
 ## Generated Files
 - `error_analysis_plots.png` - CFG差值变化可视化图表
