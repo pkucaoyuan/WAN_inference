@@ -1373,6 +1373,8 @@ class WanT2V:
         
         # 计算相邻两步的CFG差值变化（张量级别MSE）
         cfg_diff_changes = []
+        mse_scalar_changes = []  # 用于对比：右图相邻点的标量差值
+        
         for i in range(1, len(self.error_history)):
             # 获取相邻两步的完整CFG差值张量
             cfg_tensor_t = self.error_history[i]['cfg_diff_tensor']  # 当前步
@@ -1384,6 +1386,18 @@ class WanT2V:
             # 计算MSE作为变化量
             change_mse = torch.mean(tensor_diff ** 2).item()
             cfg_diff_changes.append(change_mse)
+            
+            # 对比：右图相邻点的标量差值（用于验证）
+            mse_t = self.error_history[i]['mse']
+            mse_t_minus_1 = self.error_history[i-1]['mse']
+            scalar_change = abs(mse_t - mse_t_minus_1)
+            mse_scalar_changes.append(scalar_change)
+        
+        # 调试：打印前几步的对比
+        if self.rank == 0:
+            print(f"\n🔍 MSE变化对比（前5步）:")
+            for i in range(min(5, len(cfg_diff_changes))):
+                print(f"  Step {i+2}: Change_MSE={cfg_diff_changes[i]:.6f}, Scalar_diff={mse_scalar_changes[i]:.6f}, Ratio={cfg_diff_changes[i]/(mse_scalar_changes[i]+1e-10):.2f}")
         
         # 创建图表 - 包含两个子图
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
