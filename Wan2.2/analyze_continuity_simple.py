@@ -13,18 +13,12 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
-def compute_normalized_l2_distance(latent_f, latent_f_plus_1):
-    """归一化L2距离"""
+def compute_mse_distance(latent_f, latent_f_plus_1):
+    """MSE距离（均方误差）"""
     diff = latent_f_plus_1 - latent_f
-    norm_diff = torch.norm(diff.flatten(), p=2)
+    mse = torch.mean(diff ** 2)
     
-    norm_f = torch.norm(latent_f.flatten(), p=2)
-    norm_f_plus_1 = torch.norm(latent_f_plus_1.flatten(), p=2)
-    
-    denominator = torch.sqrt(norm_f ** 2 + norm_f_plus_1 ** 2)
-    distance = norm_diff / (denominator + 1e-8)
-    
-    return distance.item()
+    return mse.item()
 
 
 def compute_cosine_similarity(latent_f, latent_f_plus_1):
@@ -46,43 +40,44 @@ def analyze_latent_continuity(latent, step_idx):
     分析单个latent tensor的帧间连续性
     
     Args:
-        latent: [B, F, C, H, W] 或 [F, C, H, W]
+        latent: [B, F, C, H, W] 或 [C, F, H, W]
         step_idx: 当前步数
     
     Returns:
-        avg_l2: 平均归一化L2距离
+        avg_mse: 平均MSE距离
         avg_cos: 平均余弦相似度
     """
     if latent.dim() == 5:
         latent = latent[0]  # 取第一个batch
     
-    F, C, H, W = latent.shape
+    # WAN格式: [C, F, H, W]
+    C, F, H, W = latent.shape
     
     if F < 2:
         return None, None
     
-    l2_distances = []
+    mse_distances = []
     cos_similarities = []
     
     for f in range(F - 1):
-        latent_f = latent[f]  # [C, H, W]
-        latent_f_plus_1 = latent[f + 1]  # [C, H, W]
+        latent_f = latent[:, f, :, :]  # [C, H, W]
+        latent_f_plus_1 = latent[:, f + 1, :, :]  # [C, H, W]
         
-        l2_dist = compute_normalized_l2_distance(latent_f, latent_f_plus_1)
+        mse_dist = compute_mse_distance(latent_f, latent_f_plus_1)
         cos_sim = compute_cosine_similarity(latent_f, latent_f_plus_1)
         
-        l2_distances.append(l2_dist)
+        mse_distances.append(mse_dist)
         cos_similarities.append(cos_sim)
     
-    avg_l2 = np.mean(l2_distances)
+    avg_mse = np.mean(mse_distances)
     avg_cos = np.mean(cos_similarities)
     
-    return avg_l2, avg_cos
+    return avg_mse, avg_cos
 
 
 def plot_continuity_analysis(
     steps,
-    l2_distances,
+    mse_distances,
     cosine_sims,
     output_path,
     title_suffix=""
@@ -90,12 +85,12 @@ def plot_continuity_analysis(
     """绘制连续性分析图表"""
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
-    # 子图1: 归一化L2距离
-    ax1.plot(steps, l2_distances, 'b-o', linewidth=2.5, markersize=6, 
-             label='Normalized L2 Distance')
+    # 子图1: MSE距离
+    ax1.plot(steps, mse_distances, 'b-o', linewidth=2.5, markersize=6, 
+             label='MSE Distance')
     ax1.set_xlabel('Denoising Step', fontsize=13)
-    ax1.set_ylabel('Distance', fontsize=13)
-    ax1.set_title(f'Temporal Continuity: Normalized L2 Distance{title_suffix}', 
+    ax1.set_ylabel('MSE', fontsize=13)
+    ax1.set_title(f'Temporal Continuity: MSE Between Adjacent Frames{title_suffix}', 
                   fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3, linestyle='--')
     ax1.legend(loc='best', fontsize=11)
@@ -134,11 +129,11 @@ def create_demo_analysis():
     # 早期：帧间差异大（高噪声，结构未形成）
     # 中期：差异逐渐减小（结构形成）
     # 后期：差异很小（细节优化，帧间高度相似）
-    l2_distances = [
-        0.48, 0.45, 0.41, 0.37, 0.33,  # 步骤1-5：高差异
-        0.28, 0.24, 0.20, 0.17, 0.14,  # 步骤6-10：差异下降
-        0.11, 0.09, 0.07, 0.06, 0.05,  # 步骤11-15：低差异
-        0.04, 0.03, 0.03, 0.02, 0.02   # 步骤16-20：极低差异
+    mse_distances = [
+        0.25, 0.20, 0.17, 0.14, 0.11,  # 步骤1-5：高MSE
+        0.08, 0.06, 0.04, 0.03, 0.02,  # 步骤6-10：MSE下降
+        0.012, 0.008, 0.005, 0.004, 0.003,  # 步骤11-15：低MSE
+        0.002, 0.001, 0.001, 0.0005, 0.0005   # 步骤16-20：极低MSE
     ]
     
     # 余弦相似度：与L2距离相反的趋势
@@ -153,22 +148,22 @@ def create_demo_analysis():
     os.makedirs(output_dir, exist_ok=True)
     
     output_path = os.path.join(output_dir, "temporal_continuity_demo.png")
-    plot_continuity_analysis(steps, l2_distances, cosine_sims, output_path, 
+    plot_continuity_analysis(steps, mse_distances, cosine_sims, output_path, 
                             title_suffix=" (Demo Data)")
     
     # 保存数据
     data_path = os.path.join(output_dir, "temporal_continuity_demo.npz")
-    np.savez(data_path, steps=steps, l2_distances=l2_distances, 
+    np.savez(data_path, steps=steps, mse_distances=mse_distances, 
              cosine_similarities=cosine_sims)
     
     # 打印统计
     print(f"\n{'='*60}")
     print(f"Temporal Continuity Statistics (Demo)")
     print(f"{'='*60}")
-    print(f"Normalized L2 Distance:")
-    print(f"  Early steps (1-5):   Mean = {np.mean(l2_distances[:5]):.4f}")
-    print(f"  Middle steps (6-10): Mean = {np.mean(l2_distances[5:10]):.4f}")
-    print(f"  Late steps (11-20):  Mean = {np.mean(l2_distances[10:]):.4f}")
+    print(f"MSE Between Adjacent Frames:")
+    print(f"  Early steps (1-5):   Mean = {np.mean(mse_distances[:5]):.4f}")
+    print(f"  Middle steps (6-10): Mean = {np.mean(mse_distances[5:10]):.4f}")
+    print(f"  Late steps (11-20):  Mean = {np.mean(mse_distances[10:]):.4f}")
     print(f"\nCosine Similarity:")
     print(f"  Early steps (1-5):   Mean = {np.mean(cosine_sims[:5]):.4f}")
     print(f"  Middle steps (6-10): Mean = {np.mean(cosine_sims[5:10]):.4f}")
@@ -176,10 +171,10 @@ def create_demo_analysis():
     print(f"{'='*60}")
     
     print(f"\n📊 Key Observation:")
-    print(f"   Frame continuity improves significantly in later steps.")
+    print(f"   Frame continuity (measured by MSE) improves significantly in later steps.")
     print(f"   This supports the frame truncation strategy:")
-    print(f"   → Early steps: Generate fewer frames (high-noise expert)")
-    print(f"   → Later steps: Complete frames (low-noise expert)")
+    print(f"   → Early steps: Generate fewer frames (high-noise expert, high MSE)")
+    print(f"   → Later steps: Complete frames (low-noise expert, low MSE)")
     print(f"{'='*60}\n")
 
 

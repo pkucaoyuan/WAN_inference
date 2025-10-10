@@ -42,30 +42,23 @@ def compute_x0_prediction(x_t, eps_pred, alpha_bar_t):
     return x0_pred
 
 
-def compute_normalized_l2_distance(latent_f, latent_f_plus_1):
+def compute_mse_distance(latent_f, latent_f_plus_1):
     """
-    计算归一化L2距离（强度型指标）
+    计算MSE距离（均方误差）
     
-    d = ||x̂₀⁽ᶠ⁺¹⁾ - x̂₀⁽ᶠ⁾||₂ / sqrt(||x̂₀⁽ᶠ⁾||₂² + ||x̂₀⁽ᶠ⁺¹⁾||₂²)
+    MSE = mean((x̂₀⁽ᶠ⁺¹⁾ - x̂₀⁽ᶠ⁾)²)
     
     Args:
         latent_f: 帧f的latent [C, H, W]
         latent_f_plus_1: 帧f+1的latent [C, H, W]
     
     Returns:
-        distance: 归一化距离标量
+        mse: MSE标量
     """
     diff = latent_f_plus_1 - latent_f
-    norm_diff = torch.norm(diff.flatten(), p=2)
+    mse = torch.mean(diff ** 2)
     
-    norm_f = torch.norm(latent_f.flatten(), p=2)
-    norm_f_plus_1 = torch.norm(latent_f_plus_1.flatten(), p=2)
-    
-    denominator = torch.sqrt(norm_f ** 2 + norm_f_plus_1 ** 2)
-    
-    distance = norm_diff / (denominator + 1e-8)
-    
-    return distance.item()
+    return mse.item()
 
 
 def compute_cosine_similarity(latent_f, latent_f_plus_1):
@@ -277,7 +270,7 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
             continue  # 需要至少2帧
         
         # 计算相邻帧的指标（注意：这是分析每步内的相邻帧，不是相邻步骤）
-        l2_distances = []
+        mse_distances = []
         cos_similarities = []
         
         # 第一步时打印详细信息
@@ -299,13 +292,13 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
                 print(f"     帧{f} 均值: {latent_f.mean():.4f}, 标准差: {latent_f.std():.4f}")
                 print(f"     帧{f+1} 均值: {latent_f_plus_1.mean():.4f}, 标准差: {latent_f_plus_1.std():.4f}")
             
-            # 计算归一化L2距离
-            l2_dist = compute_normalized_l2_distance(latent_f, latent_f_plus_1)
-            l2_distances.append(l2_dist)
+            # 计算MSE距离
+            mse_dist = compute_mse_distance(latent_f, latent_f_plus_1)
+            mse_distances.append(mse_dist)
             
             # 第一步时打印计算结果
             if step == 1 and f < 2:
-                print(f"     归一化L2距离: {l2_dist:.6f}")
+                print(f"     MSE距离: {mse_dist:.6f}")
             
             # 计算余弦相似度
             cos_sim = compute_cosine_similarity(latent_f, latent_f_plus_1)
@@ -316,11 +309,11 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
                 print(f"     余弦相似度: {cos_sim:.6f}")
         
         # 取平均
-        avg_l2 = np.mean(l2_distances)
+        avg_mse = np.mean(mse_distances)
         avg_cos = np.mean(cos_similarities)
         
         step_indices.append(step)
-        normalized_l2_distances.append(avg_l2)
+        normalized_l2_distances.append(avg_mse)  # 复用变量名，实际存MSE
         cosine_similarities.append(avg_cos)
     
     # 绘图
@@ -335,7 +328,7 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
 
 def plot_continuity_metrics(
     steps: list,
-    l2_distances: list,
+    mse_distances: list,
     cosine_sims: list,
     output_dir: str,
     use_x0_space: bool
@@ -345,7 +338,7 @@ def plot_continuity_metrics(
     
     Args:
         steps: 步数列表
-        l2_distances: 归一化L2距离列表
+        mse_distances: MSE距离列表
         cosine_sims: 余弦相似度列表
         output_dir: 输出目录
         use_x0_space: 是否使用x0空间
@@ -354,11 +347,11 @@ def plot_continuity_metrics(
     
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
-    # 子图1: 归一化L2距离
-    ax1.plot(steps, l2_distances, 'b-o', linewidth=2.5, markersize=6, label=f'Normalized L2 Distance')
+    # 子图1: MSE距离
+    ax1.plot(steps, mse_distances, 'b-o', linewidth=2.5, markersize=6, label=f'MSE Distance')
     ax1.set_xlabel('Denoising Step', fontsize=13)
-    ax1.set_ylabel('Distance', fontsize=13)
-    ax1.set_title(f'Temporal Continuity: Normalized L2 Distance in {space_name} Space', 
+    ax1.set_ylabel('MSE', fontsize=13)
+    ax1.set_title(f'Temporal Continuity: MSE Between Adjacent Frames in {space_name} Space', 
                   fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3, linestyle='--')
     ax1.legend(loc='best', fontsize=11)
@@ -404,11 +397,11 @@ def plot_continuity_metrics(
     print(f"\n{'='*60}")
     print(f"Temporal Continuity Statistics ({space_name} space)")
     print(f"{'='*60}")
-    print(f"Normalized L2 Distance:")
-    print(f"  Mean: {np.mean(l2_distances):.6f}")
-    print(f"  Std:  {np.std(l2_distances):.6f}")
-    print(f"  Min:  {np.min(l2_distances):.6f} (step {steps[np.argmin(l2_distances)]})")
-    print(f"  Max:  {np.max(l2_distances):.6f} (step {steps[np.argmax(l2_distances)]})")
+    print(f"MSE Between Adjacent Frames:")
+    print(f"  Mean: {np.mean(mse_distances):.6f}")
+    print(f"  Std:  {np.std(mse_distances):.6f}")
+    print(f"  Min:  {np.min(mse_distances):.6f} (step {steps[np.argmin(mse_distances)]})")
+    print(f"  Max:  {np.max(mse_distances):.6f} (step {steps[np.argmax(mse_distances)]})")
     print(f"\nCosine Similarity:")
     print(f"  Mean: {np.mean(cosine_sims):.6f}")
     print(f"  Std:  {np.std(cosine_sims):.6f}")
