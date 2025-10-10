@@ -138,13 +138,10 @@ def analyze_temporal_continuity_single_video(
     
     # 加载模型
     print("Loading model...")
-    config_path = os.path.join(model_path, "config.yaml")
-    if not os.path.exists(config_path):
-        # 脚本在Wan2.2/目录下，向上找配置文件
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        config_path = os.path.join(script_dir, "configs/t2v_A14B.yaml")
+    from wan.configs import WAN_CONFIGS
     
-    cfg = OmegaConf.load(config_path)
+    # 使用Python配置对象（与generate.py相同的方式）
+    cfg = WAN_CONFIGS['t2v-A14B']
     device_id = int(device.split(':')[1]) if ':' in device else 0
     
     wan_t2v = wan.WanT2V(

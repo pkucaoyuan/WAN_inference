@@ -111,16 +111,11 @@ def batch_generate_t2i(
     # 加载模型
     try:
         import wan
-        from omegaconf import OmegaConf
+        from wan.configs import WAN_CONFIGS
         
-        # 加载配置
-        config_path = os.path.join(model_path, "config.yaml")
-        if not os.path.exists(config_path):
-            # 尝试默认配置路径
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            config_path = os.path.join(script_dir, "Wan2.2/configs/t2v_A14B.yaml")
-        
-        cfg = OmegaConf.load(config_path)
+        # 使用Python配置对象（与generate.py相同的方式）
+        # T2I任务使用T2V配置
+        cfg = WAN_CONFIGS['t2v-A14B']
         
         # 提取device编号
         device_id = int(device.split(':')[1]) if ':' in device else 0
