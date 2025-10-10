@@ -189,6 +189,8 @@ def analyze_temporal_continuity_single_video(
         n_prompt="",
         seed=seed,
         offload_model=True,
+        cfg_truncate_steps=0,  # 禁用CFG截断
+        cfg_truncate_high_noise_steps=0,  # 禁用高噪声CFG截断
         enable_half_frame_generation=enable_half_frame,
         enable_debug=True,  # 启用调试模式以获取中间结果
         debug_output_dir=output_dir
@@ -237,7 +239,17 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
     print(f"   Keys: {list(first_data.keys())}")
     print(f"   x0_pred shape: {first_data['x0_pred'].shape}")
     print(f"   eps_pred shape: {first_data['eps_pred'].shape}")
-    print(f"   使用空间: {'x0' if use_x0_space else 'epsilon'}\n")
+    print(f"   使用空间: {'x0' if use_x0_space else 'epsilon'}")
+    
+    # 检查latent的维度顺序
+    test_latent = first_data['x0_pred'] if use_x0_space else first_data['eps_pred']
+    print(f"   测试latent shape: {test_latent.shape}")
+    print(f"   测试latent维度: {test_latent.dim()}")
+    if test_latent.dim() == 5:
+        print(f"   假设维度顺序: [Batch, Channel, Frame, Height, Width]")
+    elif test_latent.dim() == 4:
+        print(f"   假设维度顺序: [Channel, Frame, Height, Width]")
+    print()
     
     for latent_file in tqdm(latent_files, desc="Analyzing latents"):
         # 加载latent
@@ -247,35 +259,61 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
         step = data['step']
         latent = data['x0_pred'] if use_x0_space else data['eps_pred']
         
-        # latent shape: [C, F, H, W] (WAN的格式)
-        if latent.dim() == 4:
-            C, F, H, W = latent.shape
-        elif latent.dim() == 5:
-            # 如果是 [B, C, F, H, W]，取第一个batch
-            latent = latent[0]
+        # 处理维度：WAN格式是 [B, C, F, H, W] 或 [C, F, H, W]
+        if latent.dim() == 5:
+            # [B, C, F, H, W]，取第一个batch
+            B, C, F, H, W = latent.shape
+            latent = latent[0]  # 现在是 [C, F, H, W]
+        elif latent.dim() == 4:
+            # [C, F, H, W]
             C, F, H, W = latent.shape
         else:
             print(f"⚠️  Unexpected latent shape: {latent.shape}")
             continue
         
         if F < 2:
+            if step == 1:
+                print(f"⚠️  Step {step}: 只有{F}帧，无法计算相邻帧连续性")
             continue  # 需要至少2帧
         
-        # 计算相邻帧的指标
+        # 计算相邻帧的指标（注意：这是分析每步内的相邻帧，不是相邻步骤）
         l2_distances = []
         cos_similarities = []
+        
+        # 第一步时打印详细信息
+        if step == 1:
+            print(f"\n🔍 Step {step} 详细信息:")
+            print(f"   Latent shape after processing: [C={C}, F={F}, H={H}, W={W}]")
+            print(f"   将分析 {F-1} 对相邻帧")
+            print(f"   帧0 vs 帧1, 帧1 vs 帧2, ..., 帧{F-2} vs 帧{F-1}")
         
         for f in range(F - 1):
             latent_f = latent[:, f, :, :]  # [C, H, W]
             latent_f_plus_1 = latent[:, f + 1, :, :]  # [C, H, W]
             
+            # 第一步时打印前两对帧的详细信息
+            if step == 1 and f < 2:
+                print(f"\n   帧{f} vs 帧{f+1}:")
+                print(f"     帧{f} 范围: [{latent_f.min():.4f}, {latent_f.max():.4f}]")
+                print(f"     帧{f+1} 范围: [{latent_f_plus_1.min():.4f}, {latent_f_plus_1.max():.4f}]")
+                print(f"     帧{f} 均值: {latent_f.mean():.4f}, 标准差: {latent_f.std():.4f}")
+                print(f"     帧{f+1} 均值: {latent_f_plus_1.mean():.4f}, 标准差: {latent_f_plus_1.std():.4f}")
+            
             # 计算归一化L2距离
             l2_dist = compute_normalized_l2_distance(latent_f, latent_f_plus_1)
             l2_distances.append(l2_dist)
             
+            # 第一步时打印计算结果
+            if step == 1 and f < 2:
+                print(f"     归一化L2距离: {l2_dist:.6f}")
+            
             # 计算余弦相似度
             cos_sim = compute_cosine_similarity(latent_f, latent_f_plus_1)
             cos_similarities.append(cos_sim)
+            
+            # 第一步时打印计算结果
+            if step == 1 and f < 2:
+                print(f"     余弦相似度: {cos_sim:.6f}")
         
         # 取平均
         avg_l2 = np.mean(l2_distances)
