@@ -59,8 +59,8 @@ s̄_t = (1/(F-1)) · Σ_f s_t,f
 ### 快速演示
 
 ```bash
-# 使用模拟数据生成演示图表
-python analyze_continuity_simple.py --demo
+# 使用模拟数据生成演示图表（脚本在Wan2.2/目录下）
+python Wan2.2/analyze_continuity_simple.py --demo
 ```
 
 输出：
@@ -70,7 +70,8 @@ python analyze_continuity_simple.py --demo
 ### 完整分析（需要模型）
 
 ```bash
-python analyze_temporal_continuity.py \
+# 注意：此脚本在Wan2.2/目录下
+python Wan2.2/analyze_temporal_continuity.py \
     --model_path /path/to/WAN2.2-27B/T2V_A14B_weights \
     --prompt "A young woman walking in a city at night" \
     --output_dir ./continuity_analysis \
@@ -213,12 +214,14 @@ for step_idx, t in enumerate(timesteps):
 1. **基线方法** vs **帧数截断方法**
    ```bash
    # 基线：全程49帧
-   python analyze_temporal_continuity.py \
+   python Wan2.2/analyze_temporal_continuity.py \
+       --model_path /path/to/model \
        --num_frames 49 \
        --output_dir ./baseline_continuity
    
    # 帧数截断：3帧→49帧
-   python analyze_temporal_continuity.py \
+   python Wan2.2/analyze_temporal_continuity.py \
+       --model_path /path/to/model \
        --num_frames 49 \
        --enable_half_frame \
        --output_dir ./truncated_continuity
@@ -227,7 +230,8 @@ for step_idx, t in enumerate(timesteps):
 2. **不同步数的影响**
    ```bash
    for steps in 10 15 20 25 30; do
-       python analyze_temporal_continuity.py \
+       python Wan2.2/analyze_temporal_continuity.py \
+           --model_path /path/to/model \
            --num_inference_steps $steps \
            --output_dir ./continuity_steps_${steps}
    done
@@ -236,7 +240,8 @@ for step_idx, t in enumerate(timesteps):
 3. **不同帧数的影响**
    ```bash
    for frames in 13 25 49 97; do
-       python analyze_temporal_continuity.py \
+       python Wan2.2/analyze_temporal_continuity.py \
+           --model_path /path/to/model \
            --num_frames $frames \
            --output_dir ./continuity_frames_${frames}
    done
