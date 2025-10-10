@@ -194,18 +194,18 @@ def analyze_temporal_continuity_single_video(
         debug_output_dir=output_dir
     )
     
-    print("\nVideo generation completed.")
-    print("Note: This script requires modifications to text2video.py to capture intermediate latents.")
-    print("Please add latent recording functionality to the generate() method.\n")
+    print("\n✅ Video generation completed.")
     
-    # 如果有调试输出，读取并分析
+    # 读取并分析保存的latent
     debug_latents_dir = os.path.join(output_dir, "debug_latents")
     if os.path.exists(debug_latents_dir):
-        print("Analyzing saved latents...")
+        print(f"\n📊 分析保存的latents...")
+        print(f"   Latents目录: {debug_latents_dir}")
         analyze_saved_latents(debug_latents_dir, output_dir, use_x0_space)
     else:
-        print("⚠️  No debug latents found. Please enable latent saving in text2video.py")
-        print("    Add code to save x_t and eps_pred at each step.")
+        print(f"\n⚠️  未找到debug latents目录: {debug_latents_dir}")
+        print("    请确保enable_debug=True")
+        print("    Latents会自动保存到: {output_dir}/debug_latents/")
 
 
 def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = True):
@@ -230,6 +230,15 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
     normalized_l2_distances = []
     cosine_similarities = []
     
+    # 打印第一个文件的信息用于调试
+    first_file_path = os.path.join(debug_dir, latent_files[0])
+    first_data = torch.load(first_file_path)
+    print(f"\n📋 Latent文件格式:")
+    print(f"   Keys: {list(first_data.keys())}")
+    print(f"   x0_pred shape: {first_data['x0_pred'].shape}")
+    print(f"   eps_pred shape: {first_data['eps_pred'].shape}")
+    print(f"   使用空间: {'x0' if use_x0_space else 'epsilon'}\n")
+    
     for latent_file in tqdm(latent_files, desc="Analyzing latents"):
         # 加载latent
         latent_path = os.path.join(debug_dir, latent_file)
@@ -238,8 +247,16 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
         step = data['step']
         latent = data['x0_pred'] if use_x0_space else data['eps_pred']
         
-        # latent shape: [B, F, C, H, W]
-        B, F, C, H, W = latent.shape
+        # latent shape: [C, F, H, W] (WAN的格式)
+        if latent.dim() == 4:
+            C, F, H, W = latent.shape
+        elif latent.dim() == 5:
+            # 如果是 [B, C, F, H, W]，取第一个batch
+            latent = latent[0]
+            C, F, H, W = latent.shape
+        else:
+            print(f"⚠️  Unexpected latent shape: {latent.shape}")
+            continue
         
         if F < 2:
             continue  # 需要至少2帧
@@ -249,8 +266,8 @@ def analyze_saved_latents(debug_dir: str, output_dir: str, use_x0_space: bool = 
         cos_similarities = []
         
         for f in range(F - 1):
-            latent_f = latent[0, f]  # [C, H, W]
-            latent_f_plus_1 = latent[0, f + 1]  # [C, H, W]
+            latent_f = latent[:, f, :, :]  # [C, H, W]
+            latent_f_plus_1 = latent[:, f + 1, :, :]  # [C, H, W]
             
             # 计算归一化L2距离
             l2_dist = compute_normalized_l2_distance(latent_f, latent_f_plus_1)

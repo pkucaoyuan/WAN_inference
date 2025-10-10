@@ -592,6 +592,28 @@ class WanT2V:
                     return_dict=False,
                     generator=seed_g)[0]
                 
+                # 保存中间latent用于连续性分析
+                if self.enable_debug and self.rank == 0:
+                    # 计算x0预测（去噪估计）
+                    sigma_t = sample_scheduler.sigmas[sample_scheduler.step_index - 1] if sample_scheduler.step_index > 0 else sample_scheduler.sigmas[0]
+                    x0_pred = temp_x0  # scheduler.step已经返回x0预测
+                    
+                    # 保存latent数据
+                    latent_save_dir = os.path.join(self.debug_output_dir, "debug_latents")
+                    os.makedirs(latent_save_dir, exist_ok=True)
+                    
+                    latent_data = {
+                        'step': step_idx + 1,
+                        'timestep': t.item(),
+                        'x_t': latents[0].detach().cpu(),  # 当前噪声latent
+                        'x0_pred': x0_pred.detach().cpu(),  # x0预测
+                        'eps_pred': noise_pred.detach().cpu(),  # 预测的噪声
+                        'sigma_t': sigma_t.item() if isinstance(sigma_t, torch.Tensor) else sigma_t,
+                    }
+                    
+                    latent_save_path = os.path.join(latent_save_dir, f"latent_step_{step_idx+1:02d}.pt")
+                    torch.save(latent_data, latent_save_path)
+                
                 # 调试：分析帧数补全前的latents
                 if self.enable_debug and self.rank == 0 and (enable_improved_frame_completion or enable_half_frame_generation) and is_high_noise_phase and step_idx == max(high_noise_steps):
                     debug_latents_quality(latents, f"before_frame_completion_step_{step_idx}", self.debug_output_dir)
