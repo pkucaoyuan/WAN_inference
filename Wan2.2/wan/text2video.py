@@ -899,6 +899,7 @@ class WanT2V:
                     
                     # 重要：帧数补全后，使用补全后的latents，而不是scheduler的输出
                     # latents已经在上面更新为5帧，直接使用
+                    pass  # latents already updated above
                 else:
                     # 正常情况：使用scheduler的输出
                     latents = [temp_x0.squeeze(0)]
